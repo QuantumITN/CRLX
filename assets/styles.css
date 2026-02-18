@@ -64,7 +64,14 @@ textarea{min-height:86px;resize:vertical}
 .legend i{width:12px;height:12px;border-radius:50%;display:inline-block;margin-right:5px}
 .tiny{color:var(--muted);margin:0 0 10px}
 
-.scheduler{overflow:auto;border:1px solid var(--border);border-radius:10px;background:#fff;max-width:100%}
+.month-nav{display:flex;gap:8px;flex-wrap:wrap}
+.scheduler-frame{border:1px solid var(--border);border-radius:10px;overflow:auto;max-height:72vh;background:#fff}
+.scheduler{overflow:visible;border:none;border-radius:0;min-width:max-content}
+
+.feed-mapping-form{display:grid;gap:10px}
+.compact-grid{grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
+.compact-grid label{display:block;margin-bottom:5px;color:var(--muted);font-size:.9rem}
+
 .scroller{min-width:980px}
 .grid-header{display:grid;grid-template-columns:220px repeat(var(--days),var(--dayw));position:sticky;top:0;background:#f3f9ff;z-index:4;border-bottom:1px solid var(--border)}
 .cell{padding:8px;border-right:1px solid #e0ebf6;border-bottom:1px solid #e0ebf6;font-size:.82rem}

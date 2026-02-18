@@ -302,7 +302,14 @@ if (empty($reservations)) {
     $messages[] = 'MySQL not configured. Using fallback data source.';
 }
 
-$monthStart = new DateTimeImmutable(date('Y-m-01'));
+$monthParam = trim((string) ($_GET['month'] ?? ''));
+$monthStart = DateTimeImmutable::createFromFormat('Y-m', $monthParam, new DateTimeZone('UTC'));
+if (!$monthStart) {
+    $monthStart = new DateTimeImmutable(date('Y-m-01'), new DateTimeZone('UTC'));
+}
+$monthStart = $monthStart->setDate((int) $monthStart->format('Y'), (int) $monthStart->format('m'), 1);
+$prevMonth = $monthStart->modify('-1 month');
+$nextMonth = $monthStart->modify('+1 month');
 $appData = [
     'apartments' => flattenApartments($buildings),
     'manualReservations' => array_values(array_filter($reservations, static fn(array $r): bool => ($r['source'] ?? '') === 'manual')),
@@ -335,6 +342,11 @@ $appData = [
         <?php foreach ($messages as $message): ?><div class="flash success"><?= htmlspecialchars($message, ENT_QUOTES, 'UTF-8') ?></div><?php endforeach; ?>
         <div class="board-head">
             <h2>Availability board — <?= htmlspecialchars($appData['monthLabel'], ENT_QUOTES, 'UTF-8') ?></h2>
+            <div class="month-nav">
+                <a class="btn ghost small" href="?month=<?= urlencode($prevMonth->format('Y-m')) ?>">← Previous</a>
+                <a class="btn ghost small" href="?month=<?= urlencode((new DateTimeImmutable(date('Y-m-01')))->format('Y-m')) ?>">Current</a>
+                <a class="btn ghost small" href="?month=<?= urlencode($nextMonth->format('Y-m')) ?>">Next →</a>
+            </div>
             <div class="legend">
                 <span><i style="background:#2dc26b"></i>Booked</span>
                 <span><i style="background:#3498ff"></i>Reserved</span>
@@ -343,8 +355,10 @@ $appData = [
                 <span><i style="background:#8b5cf6"></i>Maintenance</span>
             </div>
         </div>
-        <p class="tiny">Calendar-only view. All management is now in Admin Tools.</p>
-        <div id="scheduler" class="scheduler"></div>
+        <p class="tiny">Calendar-only view. All management is now in Admin Tools. Scroll inside the frame to see all apartments and days for the month.</p>
+        <div class="scheduler-frame">
+            <div id="scheduler" class="scheduler"></div>
+        </div>
     </section>
 </main>
 <script>

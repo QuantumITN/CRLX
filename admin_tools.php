@@ -123,6 +123,7 @@ function flattenApartments(array $buildings): array
     foreach ($buildings as $building) {
         foreach (($building['apartments'] ?? []) as $apartment) {
             $rows[] = [
+                'building_id' => (string) ($building['id'] ?? ''),
                 'building_name' => (string) ($building['name'] ?? 'Building'),
                 'id' => (string) ($apartment['id'] ?? ''),
                 'name' => (string) ($apartment['name'] ?? 'Apartment'),
@@ -135,13 +136,54 @@ function flattenApartments(array $buildings): array
     return $rows;
 }
 
-function runSync(array $buildings, array &$syncMeta): array
+function deleteReservationsByApartmentIds(array $apartmentIds): void
+{
+    $apartmentIds = array_values(array_filter(array_map('strval', $apartmentIds)));
+    if ($apartmentIds === []) {
+        return;
+    }
+
+    $pdo = getDbPdo();
+    if (!$pdo) {
+        return;
+    }
+
+    $placeholders = implode(',', array_fill(0, count($apartmentIds), '?'));
+
+    try {
+        $stmt = $pdo->prepare("DELETE FROM reservations WHERE apartment_id IN ($placeholders)");
+        if ($stmt) {
+            $stmt->execute($apartmentIds);
+        }
+    } catch (Throwable $e) {
+        // swallow DB cleanup error, config file remains source of truth
+    }
+}
+
+function runSync(array $buildings, array &$syncMeta, string $scopeType = 'all', string $scopeValue = ''): array
 {
     $apartments = flattenApartments($buildings);
+    $targets = [];
+
+    foreach ($apartments as $apartment) {
+        if ($scopeType === 'building' && $apartment['building_id'] !== $scopeValue) {
+            continue;
+        }
+        if ($scopeType === 'apartment' && $apartment['id'] !== $scopeValue) {
+            continue;
+        }
+        $targets[] = $apartment;
+    }
+
+    if ($scopeType !== 'all' && $targets === []) {
+        return ['imported' => 0, 'status' => ['sync' => 'No apartments found for the selected scope.']];
+    }
+
+    $targetApartmentIds = array_map(static fn(array $a): string => (string) $a['id'], $targets);
     $ical = [];
     $status = [];
 
-    foreach ($apartments as $apartment) {
+    foreach ($targets as $apartment) {
         foreach (['airbnb', 'booking'] as $source) {
             $url = trim((string) ($apartment[$source . '_url'] ?? ''));
             if ($url === '') {
@@ -163,7 +205,15 @@ function runSync(array $buildings, array &$syncMeta): array
     if ($pdo) {
         try {
             $pdo->beginTransaction();
-            $pdo->exec("DELETE FROM reservations WHERE source='ical'");
+            if ($scopeType === 'all') {
+                $pdo->exec("DELETE FROM reservations WHERE source='ical'");
+            } else {
+                $placeholders = implode(',', array_fill(0, count($targetApartmentIds), '?'));
+                $del = $pdo->prepare("DELETE FROM reservations WHERE source='ical' AND apartment_id IN ($placeholders)");
+                if ($del) {
+                    $del->execute($targetApartmentIds);
+                }
+            }
             $ins = $pdo->prepare('INSERT INTO reservations (reservation_uuid, apartment_id, source, external_uid, title, status, start_date, end_date, readonly_flag, booking_channel) VALUES (:uuid,:apartment,:source,:external_uid,:title,:status,:start,:end,1,:channel)');
             foreach ($ical as $r) {
                 $ins->execute([
@@ -185,11 +235,12 @@ function runSync(array $buildings, array &$syncMeta): array
         }
     }
 
+    $scopeLabel = strtoupper($scopeType);
     $syncMeta['last_sync'] = gmdate('c');
-    $syncMeta['status'] = $status;
+    $syncMeta['status'] = array_merge([$scopeLabel => 'Imported ' . count($ical) . ' total event(s).'], $status);
     writeJson(SYNC_META_FILE, $syncMeta);
 
-    return ['imported' => count($ical)];
+    return ['imported' => count($ical), 'status' => $status];
 }
 
 $messages = [];
@@ -214,36 +265,204 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
+    if ($intent === 'edit_building') {
+        $buildingId = (string) ($_POST['building_id'] ?? '');
+        $name = trim((string) ($_POST['building_name'] ?? ''));
+        if ($buildingId === '' || $name === '') {
+            $errors[] = 'Building and new name are required.';
+        } else {
+            $updated = false;
+            foreach ($buildings as &$building) {
+                if ((string) ($building['id'] ?? '') !== $buildingId) {
+                    continue;
+                }
+                $building['name'] = $name;
+                $updated = true;
+                break;
+            }
+            unset($building);
+            if ($updated) {
+                writeJson(BUILDINGS_FILE, $buildings);
+                $messages[] = 'Building updated.';
+            } else {
+                $errors[] = 'Building not found.';
+            }
+        }
+    }
+
+    if ($intent === 'delete_building') {
+        $buildingId = (string) ($_POST['building_id'] ?? '');
+        if ($buildingId === '') {
+            $errors[] = 'Building selection is required.';
+        } else {
+            $newBuildings = [];
+            $deleted = false;
+            $deletedApartmentIds = [];
+            foreach ($buildings as $building) {
+                if ((string) ($building['id'] ?? '') === $buildingId) {
+                    $deleted = true;
+                    foreach (($building['apartments'] ?? []) as $apartment) {
+                        $deletedApartmentIds[] = (string) ($apartment['id'] ?? '');
+                    }
+                    continue;
+                }
+                $newBuildings[] = $building;
+            }
+
+            if ($deleted) {
+                $buildings = $newBuildings;
+                writeJson(BUILDINGS_FILE, $buildings);
+                deleteReservationsByApartmentIds($deletedApartmentIds);
+                $messages[] = 'Building deleted.';
+            } else {
+                $errors[] = 'Building not found.';
+            }
+        }
+    }
+
     if ($intent === 'add_apartment') {
         $buildingId = (string) ($_POST['building_id'] ?? '');
         $name = trim((string) ($_POST['apartment_name'] ?? ''));
         if ($name === '') {
             $errors[] = 'Apartment name is required.';
         } else {
+            $added = false;
             foreach ($buildings as &$building) {
                 if ((string) ($building['id'] ?? '') !== $buildingId) {
                     continue;
                 }
                 $building['apartments'][] = ['id' => generateId('apt'), 'name' => $name, 'airbnb_url' => '', 'booking_url' => ''];
+                $added = true;
+                break;
             }
             unset($building);
-            writeJson(BUILDINGS_FILE, $buildings);
-            $messages[] = 'Apartment added.';
+            if ($added) {
+                writeJson(BUILDINGS_FILE, $buildings);
+                $messages[] = 'Apartment added.';
+            } else {
+                $errors[] = 'Building not found for apartment add.';
+            }
+        }
+    }
+
+    if ($intent === 'edit_apartment') {
+        $apartmentId = (string) ($_POST['apartment_id'] ?? '');
+        $name = trim((string) ($_POST['apartment_name'] ?? ''));
+        $targetBuildingId = (string) ($_POST['target_building_id'] ?? '');
+        if ($apartmentId === '' || $name === '' || $targetBuildingId === '') {
+            $errors[] = 'Apartment, target building, and new name are required.';
+        } else {
+            $apartmentPayload = null;
+            $sourceBuildingId = '';
+            foreach ($buildings as &$building) {
+                foreach (($building['apartments'] ?? []) as $i => $apartment) {
+                    if ((string) ($apartment['id'] ?? '') !== $apartmentId) {
+                        continue;
+                    }
+                    $apartmentPayload = $apartment;
+                    $sourceBuildingId = (string) ($building['id'] ?? '');
+                    array_splice($building['apartments'], $i, 1);
+                    break 2;
+                }
+            }
+            unset($building);
+
+            if (!is_array($apartmentPayload)) {
+                $errors[] = 'Apartment not found.';
+            } else {
+                $apartmentPayload['name'] = $name;
+                $inserted = false;
+                foreach ($buildings as &$building) {
+                    if ((string) ($building['id'] ?? '') !== $targetBuildingId) {
+                        continue;
+                    }
+                    $building['apartments'][] = $apartmentPayload;
+                    $inserted = true;
+                    break;
+                }
+                unset($building);
+
+                if ($inserted) {
+                    writeJson(BUILDINGS_FILE, $buildings);
+                    $messages[] = 'Apartment updated and reassigned.';
+                } else {
+                    // rollback to original building if target invalid
+                    foreach ($buildings as &$building) {
+                        if ((string) ($building['id'] ?? '') !== $sourceBuildingId) {
+                            continue;
+                        }
+                        $building['apartments'][] = $apartmentPayload;
+                        break;
+                    }
+                    unset($building);
+                    $errors[] = 'Target building not found.';
+                }
+            }
+        }
+    }
+
+    if ($intent === 'delete_apartment') {
+        $apartmentId = (string) ($_POST['apartment_id'] ?? '');
+        if ($apartmentId === '') {
+            $errors[] = 'Apartment selection is required.';
+        } else {
+            $deleted = false;
+            foreach ($buildings as &$building) {
+                foreach (($building['apartments'] ?? []) as $i => $apartment) {
+                    if ((string) ($apartment['id'] ?? '') !== $apartmentId) {
+                        continue;
+                    }
+                    array_splice($building['apartments'], $i, 1);
+                    $deleted = true;
+                    break 2;
+                }
+            }
+            unset($building);
+
+            if ($deleted) {
+                writeJson(BUILDINGS_FILE, $buildings);
+                deleteReservationsByApartmentIds([$apartmentId]);
+                $messages[] = 'Apartment deleted.';
+            } else {
+                $errors[] = 'Apartment not found.';
+            }
         }
     }
 
     if ($intent === 'save_feeds') {
-        foreach ($buildings as &$building) {
-            foreach ($building['apartments'] as &$apartment) {
-                $id = (string) $apartment['id'];
-                $apartment['airbnb_url'] = trim((string) ($_POST['airbnb_' . $id] ?? ''));
-                $apartment['booking_url'] = trim((string) ($_POST['booking_' . $id] ?? ''));
+        $buildingId = (string) ($_POST['feed_building_id'] ?? '');
+        $apartmentId = (string) ($_POST['feed_apartment_id'] ?? '');
+        $airbnbUrl = trim((string) ($_POST['feed_airbnb_url'] ?? ''));
+        $bookingUrl = trim((string) ($_POST['feed_booking_url'] ?? ''));
+
+        if ($buildingId === '' || $apartmentId === '') {
+            $errors[] = 'Select both building and apartment for feed mapping.';
+        } else {
+            $updated = false;
+            foreach ($buildings as &$building) {
+                if ((string) ($building['id'] ?? '') !== $buildingId) {
+                    continue;
+                }
+                foreach ($building['apartments'] as &$apartment) {
+                    if ((string) $apartment['id'] !== $apartmentId) {
+                        continue;
+                    }
+                    $apartment['airbnb_url'] = $airbnbUrl;
+                    $apartment['booking_url'] = $bookingUrl;
+                    $updated = true;
+                    break;
+                }
+                unset($apartment);
+                break;
             }
-            unset($apartment);
+            unset($building);
+            if ($updated) {
+                writeJson(BUILDINGS_FILE, $buildings);
+                $messages[] = 'Apartment feed URLs saved.';
+            } else {
+                $errors[] = 'Could not find selected apartment in selected building.';
+            }
         }
-        unset($building);
-        writeJson(BUILDINGS_FILE, $buildings);
-        $messages[] = 'Apartment feed URLs saved.';
     }
 
     if ($intent === 'save_settings') {
@@ -254,7 +473,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($intent === 'sync_now') {
-        $res = runSync($buildings, $syncMeta);
+        $scopeType = (string) ($_POST['sync_scope'] ?? 'all');
+        $scopeValue = '';
+        if ($scopeType === 'building') {
+            $scopeValue = (string) ($_POST['sync_building_id'] ?? '');
+        } elseif ($scopeType === 'apartment') {
+            $scopeValue = (string) ($_POST['sync_apartment_id'] ?? '');
+        } else {
+            $scopeType = 'all';
+        }
+
+        $res = runSync($buildings, $syncMeta, $scopeType, $scopeValue);
         $messages[] = 'Sync completed. Imported ' . (int) $res['imported'] . ' iCal events.';
     }
 
@@ -306,6 +535,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $apartments = flattenApartments($buildings);
+$apartmentsByBuilding = [];
+foreach ($buildings as $building) {
+    $buildingId = (string) ($building['id'] ?? '');
+    $apartmentsByBuilding[$buildingId] = array_map(
+        static fn(array $a): array => [
+            'id' => (string) ($a['id'] ?? ''),
+            'name' => (string) ($a['name'] ?? 'Apartment'),
+            'airbnb_url' => (string) ($a['airbnb_url'] ?? ''),
+            'booking_url' => (string) ($a['booking_url'] ?? ''),
+            'building_id' => $buildingId,
+        ],
+        $building['apartments'] ?? []
+    );
+}
 ?>
 <!doctype html>
 <html lang="en">
@@ -332,15 +575,73 @@ $apartments = flattenApartments($buildings);
             </form>
 
             <form method="post" class="admin-card">
+                <h3>Edit building name</h3>
+                <input type="hidden" name="intent" value="edit_building">
+                <select name="building_id" required>
+                    <option value="">Select building</option>
+                    <?php foreach ($buildings as $building): ?>
+                        <option value="<?= htmlspecialchars((string) $building['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $building['name'], ENT_QUOTES, 'UTF-8') ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <input type="text" name="building_name" placeholder="New building name" required>
+                <button class="btn" type="submit">Save building</button>
+            </form>
+
+            <form method="post" class="admin-card">
+                <h3>Delete building</h3>
+                <input type="hidden" name="intent" value="delete_building">
+                <select name="building_id" required>
+                    <option value="">Select building</option>
+                    <?php foreach ($buildings as $building): ?>
+                        <option value="<?= htmlspecialchars((string) $building['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $building['name'], ENT_QUOTES, 'UTF-8') ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <p class="tiny">Deletes the building and all apartments under it.</p>
+                <button class="btn" type="submit">Delete building</button>
+            </form>
+
+            <form method="post" class="admin-card">
                 <h3>Add apartment</h3>
                 <input type="hidden" name="intent" value="add_apartment">
                 <select name="building_id" required>
+                    <option value="">Select building</option>
                     <?php foreach ($buildings as $building): ?>
                         <option value="<?= htmlspecialchars((string) $building['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $building['name'], ENT_QUOTES, 'UTF-8') ?></option>
                     <?php endforeach; ?>
                 </select>
                 <input type="text" name="apartment_name" placeholder="e.g. Apt 302" required>
                 <button class="btn" type="submit">Add apartment</button>
+            </form>
+
+            <form method="post" class="admin-card">
+                <h3>Edit / reassign apartment</h3>
+                <input type="hidden" name="intent" value="edit_apartment">
+                <select name="apartment_id" required>
+                    <option value="">Select apartment</option>
+                    <?php foreach ($apartments as $apartment): ?>
+                        <option value="<?= htmlspecialchars((string) $apartment['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($apartment['building_name'] . ' / ' . $apartment['name'], ENT_QUOTES, 'UTF-8') ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <select name="target_building_id" required>
+                    <option value="">Target building</option>
+                    <?php foreach ($buildings as $building): ?>
+                        <option value="<?= htmlspecialchars((string) $building['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $building['name'], ENT_QUOTES, 'UTF-8') ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <input type="text" name="apartment_name" placeholder="New apartment name" required>
+                <button class="btn" type="submit">Save apartment</button>
+            </form>
+
+            <form method="post" class="admin-card">
+                <h3>Delete apartment</h3>
+                <input type="hidden" name="intent" value="delete_apartment">
+                <select name="apartment_id" required>
+                    <option value="">Select apartment</option>
+                    <?php foreach ($apartments as $apartment): ?>
+                        <option value="<?= htmlspecialchars((string) $apartment['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($apartment['building_name'] . ' / ' . $apartment['name'], ENT_QUOTES, 'UTF-8') ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <button class="btn" type="submit">Delete apartment</button>
             </form>
 
             <form method="post" class="admin-card">
@@ -351,10 +652,26 @@ $apartments = flattenApartments($buildings);
                 <p class="tiny">Last sync: <?= htmlspecialchars((string) ($syncMeta['last_sync'] ?? 'Never'), ENT_QUOTES, 'UTF-8') ?></p>
             </form>
 
-            <form method="post" class="admin-card">
+            <form method="post" class="admin-card" id="sync-scope-form">
                 <h3>Sync now</h3>
                 <input type="hidden" name="intent" value="sync_now">
-                <p>Pull Airbnb/Booking iCal updates now.</p>
+                <select name="sync_scope" id="sync_scope" required>
+                    <option value="all">All buildings + apartments</option>
+                    <option value="building">One building</option>
+                    <option value="apartment">One apartment</option>
+                </select>
+                <select name="sync_building_id" id="sync_building_id">
+                    <option value="">Select building</option>
+                    <?php foreach ($buildings as $building): ?>
+                        <option value="<?= htmlspecialchars((string) $building['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $building['name'], ENT_QUOTES, 'UTF-8') ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <select name="sync_apartment_id" id="sync_apartment_id">
+                    <option value="">Select apartment</option>
+                    <?php foreach ($apartments as $apartment): ?>
+                        <option value="<?= htmlspecialchars((string) $apartment['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($apartment['building_name'] . ' / ' . $apartment['name'], ENT_QUOTES, 'UTF-8') ?></option>
+                    <?php endforeach; ?>
+                </select>
                 <button class="btn accent" type="submit">Sync now</button>
             </form>
 
@@ -398,25 +715,103 @@ $apartments = flattenApartments($buildings);
 
     <section class="panel">
         <h2>Apartment feed mapping</h2>
-        <form method="post">
+        <form method="post" id="feed-mapping-form" class="feed-mapping-form">
             <input type="hidden" name="intent" value="save_feeds">
-            <div class="feed-grid">
-                <?php foreach ($buildings as $building): ?>
-                    <article class="feed-building">
-                        <h3><?= htmlspecialchars((string) $building['name'], ENT_QUOTES, 'UTF-8') ?></h3>
-                        <?php foreach ($building['apartments'] as $apartment): ?>
-                            <div class="feed-row">
-                                <h4><?= htmlspecialchars((string) $apartment['name'], ENT_QUOTES, 'UTF-8') ?></h4>
-                                <input type="url" name="airbnb_<?= htmlspecialchars((string) $apartment['id'], ENT_QUOTES, 'UTF-8') ?>" value="<?= htmlspecialchars((string) ($apartment['airbnb_url'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Airbnb iCal URL">
-                                <input type="url" name="booking_<?= htmlspecialchars((string) $apartment['id'], ENT_QUOTES, 'UTF-8') ?>" value="<?= htmlspecialchars((string) ($apartment['booking_url'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Booking.com iCal URL">
-                            </div>
+            <div class="feed-grid compact-grid">
+                <div>
+                    <label for="feed_building_id">Building</label>
+                    <select name="feed_building_id" id="feed_building_id" required>
+                        <option value="">Select building</option>
+                        <?php foreach ($buildings as $building): ?>
+                            <option value="<?= htmlspecialchars((string) $building['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $building['name'], ENT_QUOTES, 'UTF-8') ?></option>
                         <?php endforeach; ?>
-                    </article>
-                <?php endforeach; ?>
+                    </select>
+                </div>
+                <div>
+                    <label for="feed_apartment_id">Apartment</label>
+                    <select name="feed_apartment_id" id="feed_apartment_id" required>
+                        <option value="">Select apartment</option>
+                    </select>
+                </div>
+            </div>
+            <div class="feed-grid compact-grid">
+                <div>
+                    <label for="feed_airbnb_url">Airbnb iCal URL</label>
+                    <input type="url" name="feed_airbnb_url" id="feed_airbnb_url" placeholder="https://...">
+                </div>
+                <div>
+                    <label for="feed_booking_url">Booking.com iCal URL</label>
+                    <input type="url" name="feed_booking_url" id="feed_booking_url" placeholder="https://...">
+                </div>
             </div>
             <button class="btn" type="submit">Save feed URLs</button>
         </form>
+        <p class="tiny">Use dropdowns to manage one apartment mapping at a time (cleaner for large portfolios).</p>
     </section>
 </main>
+<script>
+window.ADMIN_APARTMENTS_BY_BUILDING = <?= json_encode($apartmentsByBuilding, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?: '{}' ?>;
+(() => {
+    const byBuilding = window.ADMIN_APARTMENTS_BY_BUILDING || {};
+    const feedBuilding = document.getElementById('feed_building_id');
+    const feedApartment = document.getElementById('feed_apartment_id');
+    const feedAirbnb = document.getElementById('feed_airbnb_url');
+    const feedBooking = document.getElementById('feed_booking_url');
+
+    function apartmentList(buildingId) {
+        return Array.isArray(byBuilding[buildingId]) ? byBuilding[buildingId] : [];
+    }
+
+    function refreshApartmentOptions() {
+        if (!feedBuilding || !feedApartment) return;
+        const currentBuilding = feedBuilding.value;
+        const list = apartmentList(currentBuilding);
+        feedApartment.innerHTML = '<option value="">Select apartment</option>';
+        list.forEach((apt) => {
+            const opt = document.createElement('option');
+            opt.value = apt.id;
+            opt.textContent = apt.name;
+            feedApartment.appendChild(opt);
+        });
+        feedAirbnb.value = '';
+        feedBooking.value = '';
+    }
+
+    function loadSelectedApartmentFeeds() {
+        if (!feedBuilding || !feedApartment) return;
+        const list = apartmentList(feedBuilding.value);
+        const selected = list.find((apt) => apt.id === feedApartment.value);
+        feedAirbnb.value = selected ? (selected.airbnb_url || '') : '';
+        feedBooking.value = selected ? (selected.booking_url || '') : '';
+    }
+
+    if (feedBuilding) {
+        feedBuilding.addEventListener('change', refreshApartmentOptions);
+    }
+    if (feedApartment) {
+        feedApartment.addEventListener('change', loadSelectedApartmentFeeds);
+    }
+
+    const syncScope = document.getElementById('sync_scope');
+    const syncBuilding = document.getElementById('sync_building_id');
+    const syncApartment = document.getElementById('sync_apartment_id');
+
+    function refreshSyncScope() {
+        if (!syncScope || !syncBuilding || !syncApartment) return;
+        const scope = syncScope.value;
+        syncBuilding.disabled = scope !== 'building';
+        syncApartment.disabled = scope !== 'apartment';
+        syncBuilding.required = scope === 'building';
+        syncApartment.required = scope === 'apartment';
+        if (scope !== 'building') syncBuilding.value = '';
+        if (scope !== 'apartment') syncApartment.value = '';
+    }
+
+    if (syncScope) {
+        syncScope.addEventListener('change', refreshSyncScope);
+        refreshSyncScope();
+    }
+})();
+</script>
 </body>
 </html>
