@@ -31,10 +31,34 @@
   const modalEnd = document.getElementById('modal-end');
   const modalApartment = document.getElementById('modal-apartment');
   const modalSource = document.getElementById('modal-source');
+  const modalFirstName = document.getElementById('modal-first-name');
+  const modalLastName = document.getElementById('modal-last-name');
+  const modalEmail = document.getElementById('modal-email');
+  const modalPhone = document.getElementById('modal-phone');
+  const modalCountry = document.getElementById('modal-country');
+  const modalDocument = document.getElementById('modal-document');
+  const modalAdults = document.getElementById('modal-adults');
+  const modalChildren = document.getElementById('modal-children');
+  const modalPriceTotal = document.getElementById('modal-price-total');
+  const modalCurrency = document.getElementById('modal-currency');
+  const modalTax = document.getElementById('modal-tax');
+  const modalCleaning = document.getElementById('modal-cleaning');
+  const modalDiscount = document.getElementById('modal-discount');
+  const modalPaymentStatus = document.getElementById('modal-payment-status');
+  const modalPaymentMethod = document.getElementById('modal-payment-method');
+  const modalBookingChannel = document.getElementById('modal-booking-channel');
+  const modalNotes = document.getElementById('modal-notes');
   const modalSave = document.getElementById('modal-save');
   const modalDelete = document.getElementById('modal-delete');
   const modalCancelStatus = document.getElementById('modal-cancel-status');
   const modalNote = document.getElementById('modal-note');
+
+  const editableFields = [
+    modalTitle, modalStatus, modalStart, modalEnd, modalApartment,
+    modalFirstName, modalLastName, modalEmail, modalPhone, modalCountry, modalDocument,
+    modalAdults, modalChildren, modalPriceTotal, modalCurrency, modalTax, modalCleaning,
+    modalDiscount, modalPaymentStatus, modalPaymentMethod, modalBookingChannel, modalNotes,
+  ];
 
   let selectedReservation = null;
 
@@ -168,13 +192,31 @@
     return copy;
   }
 
+  function updateReservationInArrays(updated) {
+    const merge = (r) => {
+      Object.keys(updated).forEach((k) => {
+        r[k] = updated[k];
+      });
+    };
+    const m = manual.find((r) => r.id === updated.id);
+    if (m) merge(m);
+    const a = allReservations.find((r) => r.id === updated.id);
+    if (a) merge(a);
+  }
+
   function enableDrag(el, reservation) {
     let startX = 0;
     let baseLeft = 0;
     let active = false;
+    let original = null;
 
     el.addEventListener('pointerdown', (ev) => {
       active = true;
+      original = {
+        apartment_id: reservation.apartment_id,
+        start: reservation.start,
+        end: reservation.end,
+      };
       startX = ev.clientX;
       baseLeft = parseFloat(el.style.left || '0');
       el.classList.add('dragging');
@@ -205,11 +247,26 @@
       const newEnd = new Date(clampedStart);
       newEnd.setUTCDate(newEnd.getUTCDate() + oldLen);
 
-      reservation.start = fmt(clampedStart);
-      reservation.end = fmt(clampDateToMonth(newEnd));
-      reservation.apartment_id = targetApartment;
+      const next = {
+        ...reservation,
+        start: fmt(clampedStart),
+        end: fmt(clampDateToMonth(newEnd)),
+        apartment_id: targetApartment,
+      };
 
-      await saveManual();
+      if (!window.confirm('Confirm moving this reservation?')) {
+        updateReservationInArrays({ ...reservation, ...original });
+        placeReservations();
+        return;
+      }
+
+      const response = await requestJson('?action=api_update_reservation', { reservation: next });
+      if (response?.ok) {
+        updateReservationInArrays(next);
+      } else {
+        window.alert(response?.message || 'Move rejected. This change would create an overlap/double-booking.');
+        updateReservationInArrays({ ...reservation, ...original });
+      }
       placeReservations();
     };
 
@@ -217,21 +274,8 @@
     el.addEventListener('pointercancel', finish);
   }
 
-  async function saveManual() {
-    const payload = { manual };
-    try {
-      await fetch('?action=api_save_manual', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-    } catch (_) {
-      // ignore network error in shared-hosting-like demo mode
-    }
-  }
-
   function setModalEditable(editable) {
-    [modalTitle, modalStatus, modalStart, modalEnd, modalApartment].forEach((el) => {
+    editableFields.forEach((el) => {
       if (el) el.disabled = !editable;
     });
     if (modalSave) modalSave.disabled = !editable;
@@ -248,6 +292,24 @@
     modalStart.value = reservation.start || '';
     modalEnd.value = reservation.end || '';
     modalSource.value = reservation.source || '';
+
+    modalFirstName.value = reservation.customer_first_name || '';
+    modalLastName.value = reservation.customer_last_name || '';
+    modalEmail.value = reservation.customer_email || '';
+    modalPhone.value = reservation.customer_phone || '';
+    modalCountry.value = reservation.customer_country || '';
+    modalDocument.value = reservation.customer_document || '';
+    modalAdults.value = Number(reservation.adults || 1);
+    modalChildren.value = Number(reservation.children || 0);
+    modalPriceTotal.value = reservation.price_total || '';
+    modalCurrency.value = reservation.price_currency || 'EUR';
+    modalTax.value = reservation.tax_amount || '';
+    modalCleaning.value = reservation.cleaning_fee || '';
+    modalDiscount.value = reservation.discount_amount || '';
+    modalPaymentStatus.value = reservation.payment_status || '';
+    modalPaymentMethod.value = reservation.payment_method || '';
+    modalBookingChannel.value = reservation.booking_channel || '';
+    modalNotes.value = reservation.notes || '';
 
     modalApartment.innerHTML = '';
     apartments.forEach((apt) => {
@@ -278,34 +340,66 @@
   }
 
   async function requestJson(url, payload) {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    return res.json();
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      return await res.json();
+    } catch (_) {
+      return { ok: false, message: 'Network error' };
+    }
+  }
+
+  function collectModalReservation(forceCancelled = false) {
+    return {
+      ...selectedReservation,
+      title: modalTitle.value.trim() || 'Manual reservation',
+      status: forceCancelled ? 'cancelled' : modalStatus.value,
+      start: modalStart.value,
+      end: modalEnd.value,
+      apartment_id: modalApartment.value,
+      customer_first_name: modalFirstName.value.trim(),
+      customer_last_name: modalLastName.value.trim(),
+      customer_email: modalEmail.value.trim(),
+      customer_phone: modalPhone.value.trim(),
+      customer_country: modalCountry.value.trim(),
+      customer_document: modalDocument.value.trim(),
+      adults: Number(modalAdults.value || 1),
+      children: Number(modalChildren.value || 0),
+      price_total: modalPriceTotal.value,
+      price_currency: modalCurrency.value.trim() || 'EUR',
+      tax_amount: modalTax.value,
+      cleaning_fee: modalCleaning.value,
+      discount_amount: modalDiscount.value,
+      payment_status: modalPaymentStatus.value.trim(),
+      payment_method: modalPaymentMethod.value.trim(),
+      booking_channel: modalBookingChannel.value.trim(),
+      notes: modalNotes.value,
+    };
   }
 
   async function saveModalChanges(forceCancelled = false) {
     if (!selectedReservation || selectedReservation.readonly) return;
+    const actionText = forceCancelled ? 'cancel this reservation' : 'update this reservation';
+    if (!window.confirm(`Confirm ${actionText}?`)) return;
 
-    selectedReservation.title = modalTitle.value.trim() || 'Manual reservation';
-    selectedReservation.status = forceCancelled ? 'cancelled' : modalStatus.value;
-    selectedReservation.start = modalStart.value;
-    selectedReservation.end = modalEnd.value;
-    selectedReservation.apartment_id = modalApartment.value;
-
-    const data = await requestJson('?action=api_update_reservation', { reservation: selectedReservation });
+    const updated = collectModalReservation(forceCancelled);
+    const data = await requestJson('?action=api_update_reservation', { reservation: updated });
     if (data?.ok) {
+      updateReservationInArrays(updated);
       placeReservations();
       closeModal();
     } else {
-      modalNote.textContent = 'Update failed. Please try again.';
+      modalNote.textContent = data?.message || 'Update failed. Overlap/double-booking protection blocked this change.';
     }
   }
 
   async function deleteSelectedReservation() {
     if (!selectedReservation || selectedReservation.readonly) return;
+    if (!window.confirm('Delete this reservation permanently?')) return;
+
     const data = await requestJson('?action=api_delete_reservation', { id: selectedReservation.id });
     if (data?.ok) {
       const idxManual = manual.findIndex((r) => r.id === selectedReservation.id);
@@ -315,7 +409,7 @@
       placeReservations();
       closeModal();
     } else {
-      modalNote.textContent = 'Delete failed. Please try again.';
+      modalNote.textContent = data?.message || 'Delete failed. Please try again.';
     }
   }
 

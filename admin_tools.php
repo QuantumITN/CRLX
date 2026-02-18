@@ -137,6 +137,33 @@ function flattenApartments(array $buildings): array
     return $rows;
 }
 
+
+function dbHasOverlap(string $apartmentId, string $startDate, string $endDate, ?string $excludeUuid = null): bool
+{
+    $pdo = getDbPdo();
+    if (!$pdo) {
+        return false;
+    }
+
+    $sql = 'SELECT COUNT(*) FROM reservations WHERE archived_flag = 0 AND apartment_id = :apartment_id AND start_date < :end_date AND end_date > :start_date';
+    if ($excludeUuid !== null && $excludeUuid !== '') {
+        $sql .= ' AND reservation_uuid <> :exclude_uuid';
+    }
+
+    $stmt = $pdo->prepare($sql);
+    $params = [
+        ':apartment_id' => $apartmentId,
+        ':start_date' => $startDate,
+        ':end_date' => $endDate,
+    ];
+    if ($excludeUuid !== null && $excludeUuid !== '') {
+        $params[':exclude_uuid'] = $excludeUuid;
+    }
+    $stmt->execute($params);
+
+    return ((int) $stmt->fetchColumn()) > 0;
+}
+
 function deleteReservationsByApartmentIds(array $apartmentIds): void
 {
     $apartmentIds = array_values(array_filter(array_map('strval', $apartmentIds)));
@@ -236,15 +263,23 @@ function runSync(array $buildings, array &$syncMeta, string $scopeType = 'all', 
             }
             $ins = $pdo->prepare('INSERT INTO reservations (reservation_uuid, apartment_id, source, external_uid, title, status, start_date, end_date, readonly_flag, booking_channel) VALUES (:uuid,:apartment,:source,:external_uid,:title,:status,:start,:end,1,:channel)');
             foreach ($ical as $r) {
+                $apt = (string) $r['apartment_id'];
+                $start = (string) $r['start'];
+                $end = (string) $r['end'];
+                if (function_exists('dbHasOverlap') && dbHasOverlap($apt, $start, $end)) {
+                    $status[$r['title'] . ' (' . $apt . ')'] = 'Skipped due to overlap protection';
+                    continue;
+                }
+
                 $ins->execute([
                     ':uuid' => (string) $r['id'],
-                    ':apartment' => (string) $r['apartment_id'],
+                    ':apartment' => $apt,
                     ':source' => 'ical',
                     ':external_uid' => (string) ($r['external_uid'] ?? ''),
                     ':title' => (string) $r['title'],
                     ':status' => (string) $r['status'],
-                    ':start' => (string) $r['start'],
-                    ':end' => (string) $r['end'],
+                    ':start' => $start,
+                    ':end' => $end,
                     ':channel' => (string) ($r['source'] ?? 'ical'),
                 ]);
             }

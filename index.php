@@ -131,7 +131,7 @@ function dbFetchReservationsForCalendar(): array
     if (!$pdo) {
         return [];
     }
-    $stmt = $pdo->query("SELECT reservation_uuid, apartment_id, title, status, start_date, end_date, source, readonly_flag FROM reservations WHERE archived_flag = 0 ORDER BY start_date ASC");
+    $stmt = $pdo->query("SELECT reservation_uuid, apartment_id, title, status, start_date, end_date, source, readonly_flag, customer_first_name, customer_last_name, customer_email, customer_phone, customer_country, customer_document, adults, children, notes, price_total, price_currency, tax_amount, cleaning_fee, discount_amount, payment_status, payment_method, booking_channel FROM reservations WHERE archived_flag = 0 ORDER BY start_date ASC");
     $rows = $stmt ? $stmt->fetchAll() : [];
 
     return array_map(static function (array $r): array {
@@ -144,8 +144,52 @@ function dbFetchReservationsForCalendar(): array
             'end' => (string) $r['end_date'],
             'source' => (string) $r['source'],
             'readonly' => ((int) $r['readonly_flag']) === 1,
+            'customer_first_name' => (string) ($r['customer_first_name'] ?? ''),
+            'customer_last_name' => (string) ($r['customer_last_name'] ?? ''),
+            'customer_email' => (string) ($r['customer_email'] ?? ''),
+            'customer_phone' => (string) ($r['customer_phone'] ?? ''),
+            'customer_country' => (string) ($r['customer_country'] ?? ''),
+            'customer_document' => (string) ($r['customer_document'] ?? ''),
+            'adults' => (int) ($r['adults'] ?? 1),
+            'children' => (int) ($r['children'] ?? 0),
+            'notes' => (string) ($r['notes'] ?? ''),
+            'price_total' => (string) ($r['price_total'] ?? ''),
+            'price_currency' => (string) ($r['price_currency'] ?? ''),
+            'tax_amount' => (string) ($r['tax_amount'] ?? ''),
+            'cleaning_fee' => (string) ($r['cleaning_fee'] ?? ''),
+            'discount_amount' => (string) ($r['discount_amount'] ?? ''),
+            'payment_status' => (string) ($r['payment_status'] ?? ''),
+            'payment_method' => (string) ($r['payment_method'] ?? ''),
+            'booking_channel' => (string) ($r['booking_channel'] ?? ''),
         ];
     }, $rows);
+}
+
+
+function dbHasOverlap(string $apartmentId, string $startDate, string $endDate, ?string $excludeUuid = null): bool
+{
+    $pdo = getDbPdo();
+    if (!$pdo) {
+        return false;
+    }
+
+    $sql = 'SELECT COUNT(*) FROM reservations WHERE archived_flag = 0 AND apartment_id = :apartment_id AND start_date < :end_date AND end_date > :start_date';
+    if ($excludeUuid !== null && $excludeUuid !== '') {
+        $sql .= ' AND reservation_uuid <> :exclude_uuid';
+    }
+
+    $stmt = $pdo->prepare($sql);
+    $params = [
+        ':apartment_id' => $apartmentId,
+        ':start_date' => $startDate,
+        ':end_date' => $endDate,
+    ];
+    if ($excludeUuid !== null && $excludeUuid !== '') {
+        $params[':exclude_uuid'] = $excludeUuid;
+    }
+    $stmt->execute($params);
+
+    return ((int) $stmt->fetchColumn()) > 0;
 }
 
 function dbSaveDragUpdates(array $manual): bool
@@ -161,11 +205,23 @@ function dbSaveDragUpdates(array $manual): bool
         $event = $pdo->prepare('INSERT INTO reservation_events (reservation_uuid, event_type, payload_json) VALUES (:uuid, :event_type, :payload)');
 
         foreach ($manual as $r) {
+            $apartmentId = (string) ($r['apartment_id'] ?? '');
+            $startDate = (string) ($r['start'] ?? '');
+            $endDate = (string) ($r['end'] ?? '');
+            $uuid = (string) ($r['id'] ?? '');
+
+            if ($apartmentId === '' || $startDate === '' || $endDate === '' || $uuid === '') {
+                throw new RuntimeException('Invalid reservation payload.');
+            }
+            if (dbHasOverlap($apartmentId, $startDate, $endDate, $uuid)) {
+                throw new RuntimeException('Overlap detected for apartment.');
+            }
+
             $update->execute([
-                ':apartment_id' => (string) ($r['apartment_id'] ?? ''),
-                ':start_date' => (string) ($r['start'] ?? ''),
-                ':end_date' => (string) ($r['end'] ?? ''),
-                ':uuid' => (string) ($r['id'] ?? ''),
+                ':apartment_id' => $apartmentId,
+                ':start_date' => $startDate,
+                ':end_date' => $endDate,
+                ':uuid' => $uuid,
             ]);
             $event->execute([
                 ':uuid' => (string) ($r['id'] ?? ''),
@@ -191,14 +247,40 @@ function dbUpdateManualReservation(array $reservation): bool
         return false;
     }
 
-    $stmt = $pdo->prepare('UPDATE reservations SET apartment_id = :apartment_id, title = :title, status = :status, start_date = :start_date, end_date = :end_date, updated_at = NOW() WHERE reservation_uuid = :uuid AND source = "manual" AND archived_flag = 0');
+    $apartmentId = (string) ($reservation['apartment_id'] ?? '');
+    $startDate = (string) ($reservation['start'] ?? '');
+    $endDate = (string) ($reservation['end'] ?? '');
+    $uuid = (string) ($reservation['id'] ?? '');
+
+    if ($apartmentId === '' || $startDate === '' || $endDate === '' || $uuid === '' || dbHasOverlap($apartmentId, $startDate, $endDate, $uuid)) {
+        return false;
+    }
+
+    $stmt = $pdo->prepare('UPDATE reservations SET apartment_id = :apartment_id, title = :title, status = :status, start_date = :start_date, end_date = :end_date, customer_first_name = :first, customer_last_name = :last, customer_email = :email, customer_phone = :phone, customer_country = :country, customer_document = :document, adults = :adults, children = :children, notes = :notes, price_total = :price_total, price_currency = :currency, tax_amount = :tax, cleaning_fee = :cleaning, discount_amount = :discount, payment_status = :payment_status, payment_method = :payment_method, booking_channel = :booking_channel, updated_at = NOW() WHERE reservation_uuid = :uuid AND source = "manual" AND archived_flag = 0');
     $ok = $stmt->execute([
-        ':apartment_id' => (string) ($reservation['apartment_id'] ?? ''),
+        ':apartment_id' => $apartmentId,
         ':title' => (string) ($reservation['title'] ?? 'Manual reservation'),
         ':status' => (string) ($reservation['status'] ?? 'reserved'),
-        ':start_date' => (string) ($reservation['start'] ?? ''),
-        ':end_date' => (string) ($reservation['end'] ?? ''),
-        ':uuid' => (string) ($reservation['id'] ?? ''),
+        ':start_date' => $startDate,
+        ':end_date' => $endDate,
+        ':first' => (string) ($reservation['customer_first_name'] ?? ''),
+        ':last' => (string) ($reservation['customer_last_name'] ?? ''),
+        ':email' => (string) ($reservation['customer_email'] ?? ''),
+        ':phone' => (string) ($reservation['customer_phone'] ?? ''),
+        ':country' => (string) ($reservation['customer_country'] ?? ''),
+        ':document' => (string) ($reservation['customer_document'] ?? ''),
+        ':adults' => max(1, (int) ($reservation['adults'] ?? 1)),
+        ':children' => max(0, (int) ($reservation['children'] ?? 0)),
+        ':notes' => (string) ($reservation['notes'] ?? ''),
+        ':price_total' => ((string) ($reservation['price_total'] ?? '') === '' ? null : (float) $reservation['price_total']),
+        ':currency' => (string) ($reservation['price_currency'] ?? 'EUR'),
+        ':tax' => ((string) ($reservation['tax_amount'] ?? '') === '' ? null : (float) $reservation['tax_amount']),
+        ':cleaning' => ((string) ($reservation['cleaning_fee'] ?? '') === '' ? null : (float) $reservation['cleaning_fee']),
+        ':discount' => ((string) ($reservation['discount_amount'] ?? '') === '' ? null : (float) $reservation['discount_amount']),
+        ':payment_status' => (string) ($reservation['payment_status'] ?? ''),
+        ':payment_method' => (string) ($reservation['payment_method'] ?? ''),
+        ':booking_channel' => (string) ($reservation['booking_channel'] ?? ''),
+        ':uuid' => $uuid,
     ]);
 
     if ($ok) {
@@ -290,15 +372,23 @@ function runSync(array $buildings, array &$syncMeta): void
             $pdo->exec("DELETE FROM reservations WHERE source='ical'");
             $ins = $pdo->prepare('INSERT INTO reservations (reservation_uuid, apartment_id, source, external_uid, title, status, start_date, end_date, readonly_flag, booking_channel) VALUES (:uuid,:apartment,:source,:external_uid,:title,:status,:start,:end,1,:channel)');
             foreach ($ical as $r) {
+                $apt = (string) $r['apartment_id'];
+                $start = (string) $r['start'];
+                $end = (string) $r['end'];
+                if (function_exists('dbHasOverlap') && dbHasOverlap($apt, $start, $end)) {
+                    $status[$r['title'] . ' (' . $apt . ')'] = 'Skipped due to overlap protection';
+                    continue;
+                }
+
                 $ins->execute([
                     ':uuid' => (string) $r['id'],
-                    ':apartment' => (string) $r['apartment_id'],
+                    ':apartment' => $apt,
                     ':source' => 'ical',
                     ':external_uid' => (string) ($r['external_uid'] ?? ''),
                     ':title' => (string) $r['title'],
                     ':status' => (string) $r['status'],
-                    ':start' => (string) $r['start'],
-                    ':end' => (string) $r['end'],
+                    ':start' => $start,
+                    ':end' => $end,
                     ':channel' => (string) ($r['source'] ?? 'ical'),
                 ]);
             }
@@ -336,7 +426,7 @@ if ($action === 'api_save_manual' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $payload = json_decode((string) file_get_contents('php://input'), true);
     $manual = is_array($payload['manual'] ?? null) ? $payload['manual'] : [];
     $ok = dbSaveDragUpdates($manual);
-    echo json_encode(['ok' => $ok]);
+    echo json_encode(['ok' => $ok, 'message' => $ok ? 'Saved.' : 'Update rejected due to overlap or invalid payload.']);
     exit;
 }
 
@@ -346,7 +436,7 @@ if ($action === 'api_update_reservation' && $_SERVER['REQUEST_METHOD'] === 'POST
     $payload = json_decode((string) file_get_contents('php://input'), true);
     $reservation = is_array($payload['reservation'] ?? null) ? $payload['reservation'] : [];
     $ok = dbUpdateManualReservation($reservation);
-    echo json_encode(['ok' => $ok]);
+    echo json_encode(['ok' => $ok, 'message' => $ok ? 'Updated.' : 'Update rejected due to overlap or invalid payload.']);
     exit;
 }
 
@@ -355,7 +445,7 @@ if ($action === 'api_delete_reservation' && $_SERVER['REQUEST_METHOD'] === 'POST
     $payload = json_decode((string) file_get_contents('php://input'), true);
     $reservationId = (string) ($payload['id'] ?? '');
     $ok = $reservationId !== '' && dbDeleteManualReservation($reservationId);
-    echo json_encode(['ok' => $ok]);
+    echo json_encode(['ok' => $ok, 'message' => $ok ? 'Deleted.' : 'Delete failed.']);
     exit;
 }
 
@@ -459,6 +549,23 @@ $appData = [
                     <select id="modal-apartment"></select>
                 </label>
                 <label>Source <input type="text" id="modal-source" disabled></label>
+                <label>First name <input type="text" id="modal-first-name"></label>
+                <label>Last name <input type="text" id="modal-last-name"></label>
+                <label>Email <input type="email" id="modal-email"></label>
+                <label>Phone <input type="text" id="modal-phone"></label>
+                <label>Country <input type="text" id="modal-country"></label>
+                <label>Passport/ID <input type="text" id="modal-document"></label>
+                <label>Adults <input type="number" min="1" id="modal-adults"></label>
+                <label>Children <input type="number" min="0" id="modal-children"></label>
+                <label>Total price <input type="number" step="0.01" id="modal-price-total"></label>
+                <label>Currency <input type="text" id="modal-currency"></label>
+                <label>Tax amount <input type="number" step="0.01" id="modal-tax"></label>
+                <label>Cleaning fee <input type="number" step="0.01" id="modal-cleaning"></label>
+                <label>Discount <input type="number" step="0.01" id="modal-discount"></label>
+                <label>Payment status <input type="text" id="modal-payment-status"></label>
+                <label>Payment method <input type="text" id="modal-payment-method"></label>
+                <label>Booking channel <input type="text" id="modal-booking-channel"></label>
+                <label style="grid-column:1/-1;">Notes <textarea id="modal-notes"></textarea></label>
             </div>
             <p class="tiny" id="modal-note"></p>
             <div class="modal-actions">

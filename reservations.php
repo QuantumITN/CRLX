@@ -48,6 +48,33 @@ function flattenApartments(array $buildings): array
     return $rows;
 }
 
+
+function dbHasOverlap(string $apartmentId, string $startDate, string $endDate, ?string $excludeUuid = null): bool
+{
+    $pdo = getDbPdo();
+    if (!$pdo) {
+        return false;
+    }
+
+    $sql = 'SELECT COUNT(*) FROM reservations WHERE archived_flag = 0 AND apartment_id = :apartment_id AND start_date < :end_date AND end_date > :start_date';
+    if ($excludeUuid !== null && $excludeUuid !== '') {
+        $sql .= ' AND reservation_uuid <> :exclude_uuid';
+    }
+
+    $stmt = $pdo->prepare($sql);
+    $params = [
+        ':apartment_id' => $apartmentId,
+        ':start_date' => $startDate,
+        ':end_date' => $endDate,
+    ];
+    if ($excludeUuid !== null && $excludeUuid !== '') {
+        $params[':exclude_uuid'] = $excludeUuid;
+    }
+    $stmt->execute($params);
+
+    return ((int) $stmt->fetchColumn()) > 0;
+}
+
 function dbInsertManualReservation(array $r): bool
 {
     $pdo = getDbPdo();
@@ -212,6 +239,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = 'Apartment, check-in, and check-out are required.';
         } elseif (!dbIsReady()) {
             $errors[] = 'MySQL is not configured. Configure DB first.';
+        } elseif (dbHasOverlap($reservation['apartment_id'], $reservation['start_date'], $reservation['end_date'])) {
+            $errors[] = 'Could not save reservation: overlap detected (double-booking protection).';
         } elseif (dbInsertManualReservation($reservation)) {
             $messages[] = 'Manual reservation saved successfully.';
         } else {
@@ -237,6 +266,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($update['reservation_uuid'] === '' || $update['apartment_id'] === '' || $update['start_date'] === '' || $update['end_date'] === '') {
             $errors[] = 'Reservation ID, apartment, check-in, and check-out are required for update.';
+        } elseif (dbHasOverlap($update['apartment_id'], $update['start_date'], $update['end_date'], $update['reservation_uuid'])) {
+            $errors[] = 'Could not update reservation: overlap detected (double-booking protection).';
         } elseif (dbUpdateManualReservation($update)) {
             $messages[] = 'Reservation updated successfully.';
         } else {
@@ -370,18 +401,18 @@ $recentReservations = dbRecentReservations();
                                 <input type="text" name="customer_phone" value="<?= htmlspecialchars((string) ($r['customer_phone'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Phone">
                                 <input type="text" name="booking_channel" value="<?= htmlspecialchars((string) ($r['booking_channel'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Channel">
                                 <input type="text" name="payment_status" value="<?= htmlspecialchars((string) ($r['payment_status'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Payment status">
-                                <button class="btn" type="submit">Update</button>
+                                <button class="btn" type="submit" onclick="return confirm('Confirm reservation update?')">Update</button>
                             </form>
                             <div class="reservation-inline-actions">
                                 <form method="post">
                                     <input type="hidden" name="intent" value="cancel_manual_reservation">
                                     <input type="hidden" name="reservation_uuid" value="<?= htmlspecialchars((string) $r['reservation_uuid'], ENT_QUOTES, 'UTF-8') ?>">
-                                    <button class="btn" type="submit">Cancel</button>
+                                    <button class="btn" type="submit" onclick="return confirm('Confirm cancellation of this reservation?')">Cancel</button>
                                 </form>
                                 <form method="post">
                                     <input type="hidden" name="intent" value="delete_manual_reservation">
                                     <input type="hidden" name="reservation_uuid" value="<?= htmlspecialchars((string) $r['reservation_uuid'], ENT_QUOTES, 'UTF-8') ?>">
-                                    <button class="btn" type="submit">Delete</button>
+                                    <button class="btn" type="submit" onclick="return confirm('Delete this reservation permanently?')">Delete</button>
                                 </form>
                             </div>
                         <?php else: ?>
