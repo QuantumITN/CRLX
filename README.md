@@ -13,7 +13,7 @@ This version includes:
 Admin pages now require login.
 
 - Username: `admin`
-- Password: `Turkiet3040?!`
+- Password: `%%%%%%%%%%%%`
 
 Login page:
 
