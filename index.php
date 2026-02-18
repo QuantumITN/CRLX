@@ -408,7 +408,7 @@ $appData = [
 </head>
 <body>
 <?php renderSiteHeader('Availability Calendar'); ?>
-<main class="container page-with-header">
+<main class="container page-with-header calendar-page">
     <section class="panel">
         <?php foreach ($messages as $message): ?><div class="flash success"><?= htmlspecialchars($message, ENT_QUOTES, 'UTF-8') ?></div><?php endforeach; ?>
         <div class="board-head">

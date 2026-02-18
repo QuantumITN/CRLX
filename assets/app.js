@@ -1,7 +1,7 @@
 (() => {
   const state = window.APP || {};
   const scheduler = document.getElementById('scheduler');
-  const DAY_WIDTH = 56;
+  const DAY_WIDTH = 40;
 
   const apartments = Array.isArray(state.apartments) ? state.apartments : [];
   const apartmentMap = new Map(apartments.map((a) => [a.id, `${a.building_name} / ${a.name}`]));

@@ -10,7 +10,7 @@
   --accent:#ffc857;
   --danger:#dc3545;
   --success:#198754;
-  --dayw:56px;
+  --dayw:40px;
   --rowh:56px;
 }
 *{box-sizing:border-box}
@@ -30,6 +30,7 @@ body{font-family:Inter,Segoe UI,Arial,sans-serif;background:linear-gradient(180d
 
 .page-with-header{padding-top:86px}
 .container{width:min(1400px,96vw);margin:16px auto;display:grid;gap:12px}
+.container.calendar-page{width:calc(100% - 24px);margin:16px 12px}
 .panel{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:12px;box-shadow:0 10px 30px rgba(46,131,197,.08)}
 h1,h2{margin:0 0 10px}
 h3,h4{margin:0 0 8px}
@@ -65,8 +66,8 @@ textarea{min-height:86px;resize:vertical}
 .tiny{color:var(--muted);margin:0 0 10px}
 
 .month-nav{display:flex;gap:8px;flex-wrap:wrap}
-.scheduler-frame{border:1px solid var(--border);border-radius:10px;overflow:auto;max-height:72vh;background:#fff}
-.scheduler{overflow:visible;border:none;border-radius:0;min-width:max-content}
+.scheduler-frame{border:1px solid var(--border);border-radius:10px;overflow:auto;max-height:72vh;background:#fff;-webkit-overflow-scrolling:touch}
+.scheduler{display:inline-block;vertical-align:top;overflow:visible;border:none;border-radius:0;min-width:max-content}
 
 .feed-mapping-form{display:grid;gap:10px}
 .compact-grid{grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
@@ -81,7 +82,7 @@ textarea{min-height:86px;resize:vertical}
 .apt-label{padding:8px;border-right:1px solid #e0ebf6;border-bottom:1px solid #e0ebf6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .day-cell{border-right:1px solid #e0ebf6;border-bottom:1px solid #e0ebf6}
 .track{position:absolute;left:220px;right:0;top:0;bottom:0;pointer-events:none}
-.bar{position:absolute;top:8px;height:40px;border-radius:8px;color:#fff;padding:4px 8px;font-size:.75rem;font-weight:600;pointer-events:auto;cursor:grab;display:flex;align-items:center;overflow:hidden;white-space:nowrap}
+.bar{position:absolute;top:8px;height:40px;border:none;border-radius:8px;color:#fff;padding:4px 8px;font-size:.75rem;font-weight:600;pointer-events:auto;cursor:grab;display:flex;align-items:center;overflow:hidden;white-space:nowrap;text-align:left}
 .bar.readonly{opacity:.75;cursor:not-allowed}
 .bar.dragging{opacity:.7;cursor:grabbing}
 
