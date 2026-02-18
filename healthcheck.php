@@ -10,6 +10,56 @@ requireAuth();
 
 date_default_timezone_set('UTC');
 
+const DB_CONFIG_FILE = __DIR__ . '/data/db_config.php';
+
+function saveDbConfig(array $cfg): bool
+{
+    $export = var_export([
+        'host' => (string) ($cfg['host'] ?? '127.0.0.1'),
+        'port' => (int) ($cfg['port'] ?? 3306),
+        'name' => (string) ($cfg['name'] ?? ''),
+        'user' => (string) ($cfg['user'] ?? ''),
+        'pass' => (string) ($cfg['pass'] ?? ''),
+        'charset' => (string) ($cfg['charset'] ?? 'utf8mb4'),
+    ], true);
+
+    $php = "<?php\nreturn " . $export . ";\n";
+
+    return file_put_contents(DB_CONFIG_FILE, $php) !== false;
+}
+
+$messages = [];
+$errors = [];
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $intent = (string) ($_POST['intent'] ?? '');
+    $cfg = [
+        'host' => trim((string) ($_POST['db_host'] ?? '127.0.0.1')),
+        'port' => (int) ($_POST['db_port'] ?? 3306),
+        'name' => trim((string) ($_POST['db_name'] ?? '')),
+        'user' => trim((string) ($_POST['db_user'] ?? '')),
+        'pass' => (string) ($_POST['db_pass'] ?? ''),
+        'charset' => trim((string) ($_POST['db_charset'] ?? 'utf8mb4')),
+    ];
+
+    if ($intent === 'save_db_config') {
+        if (saveDbConfig($cfg)) {
+            $messages[] = 'Database config saved.';
+        } else {
+            $errors[] = 'Could not save database config file.';
+        }
+    }
+
+    if ($intent === 'test_db_config') {
+        $test = testDbConnection($cfg);
+        if ($test['ok']) {
+            $messages[] = 'DB test successful: ' . (string) $test['message'];
+        } else {
+            $errors[] = 'DB test failed: ' . (string) $test['message'];
+        }
+    }
+}
+
+$dbConfig = loadDbConfig();
 $checks = [];
 
 $checks[] = ['name' => 'PHP version', 'ok' => version_compare(PHP_VERSION, '8.1.0', '>='), 'details' => PHP_VERSION];
@@ -51,11 +101,41 @@ $allOk = !in_array(false, array_column($checks, 'ok'), true);
 <main class="container page-with-header">
 
     <section class="panel">
+        <?php foreach ($errors as $error): ?><div class="flash error"><?= htmlspecialchars($error, ENT_QUOTES, 'UTF-8') ?></div><?php endforeach; ?>
+        <?php foreach ($messages as $message): ?><div class="flash success"><?= htmlspecialchars($message, ENT_QUOTES, 'UTF-8') ?></div><?php endforeach; ?>
+
         <?php if ($allOk): ?>
             <div class="flash success">All checks passed ✅</div>
         <?php else: ?>
             <div class="flash error">Some checks failed ❌. Fix the failing items below.</div>
         <?php endif; ?>
+
+
+        <div class="admin-grid" style="margin-top:10px;">
+            <form method="post" class="admin-card">
+                <h3>Database configuration</h3>
+                <input type="hidden" name="intent" value="save_db_config">
+                <input type="text" name="db_host" value="<?= htmlspecialchars((string) ($dbConfig['host'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB host" required>
+                <input type="number" name="db_port" value="<?= (int) ($dbConfig['port'] ?? 3306) ?>" placeholder="DB port" required>
+                <input type="text" name="db_name" value="<?= htmlspecialchars((string) ($dbConfig['name'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB name" required>
+                <input type="text" name="db_user" value="<?= htmlspecialchars((string) ($dbConfig['user'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB user" required>
+                <input type="password" name="db_pass" value="<?= htmlspecialchars((string) ($dbConfig['pass'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB password">
+                <input type="text" name="db_charset" value="<?= htmlspecialchars((string) ($dbConfig['charset'] ?? 'utf8mb4'), ENT_QUOTES, 'UTF-8') ?>" placeholder="utf8mb4" required>
+                <button class="btn" type="submit">Save DB config</button>
+            </form>
+
+            <form method="post" class="admin-card">
+                <h3>Test DB connection</h3>
+                <input type="hidden" name="intent" value="test_db_config">
+                <input type="text" name="db_host" value="<?= htmlspecialchars((string) ($dbConfig['host'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB host" required>
+                <input type="number" name="db_port" value="<?= (int) ($dbConfig['port'] ?? 3306) ?>" placeholder="DB port" required>
+                <input type="text" name="db_name" value="<?= htmlspecialchars((string) ($dbConfig['name'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB name" required>
+                <input type="text" name="db_user" value="<?= htmlspecialchars((string) ($dbConfig['user'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB user" required>
+                <input type="password" name="db_pass" value="<?= htmlspecialchars((string) ($dbConfig['pass'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB password">
+                <input type="text" name="db_charset" value="<?= htmlspecialchars((string) ($dbConfig['charset'] ?? 'utf8mb4'), ENT_QUOTES, 'UTF-8') ?>" placeholder="utf8mb4" required>
+                <button class="btn accent" type="submit">Test connection</button>
+            </form>
+        </div>
 
         <div class="feed-building">
             <?php foreach ($checks as $c): ?>

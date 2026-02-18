@@ -15,6 +15,7 @@ const DATA_DIR = __DIR__ . '/data';
 const BUILDINGS_FILE = DATA_DIR . '/buildings.json';
 const SETTINGS_FILE = DATA_DIR . '/settings.json';
 const SYNC_META_FILE = DATA_DIR . '/sync_meta.json';
+const DB_CONFIG_FILE = DATA_DIR . '/db_config.php';
 
 if (!is_dir(DATA_DIR)) {
     mkdir(DATA_DIR, 0775, true);
@@ -158,6 +159,25 @@ function deleteReservationsByApartmentIds(array $apartmentIds): void
     } catch (Throwable $e) {
         // swallow DB cleanup error, config file remains source of truth
     }
+}
+
+
+function saveDbConfig(array $cfg): bool
+{
+    $export = var_export([
+        'host' => (string) ($cfg['host'] ?? '127.0.0.1'),
+        'port' => (int) ($cfg['port'] ?? 3306),
+        'name' => (string) ($cfg['name'] ?? ''),
+        'user' => (string) ($cfg['user'] ?? ''),
+        'pass' => (string) ($cfg['pass'] ?? ''),
+        'charset' => (string) ($cfg['charset'] ?? 'utf8mb4'),
+    ], true);
+
+    $php = "<?php
+return " . $export . ";
+";
+
+    return file_put_contents(DB_CONFIG_FILE, $php) !== false;
 }
 
 function runSync(array $buildings, array &$syncMeta, string $scopeType = 'all', string $scopeValue = ''): array
@@ -487,6 +507,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $messages[] = 'Sync completed. Imported ' . (int) $res['imported'] . ' iCal events.';
     }
 
+    if ($intent === 'save_db_config') {
+        $cfg = [
+            'host' => trim((string) ($_POST['db_host'] ?? '127.0.0.1')),
+            'port' => (int) ($_POST['db_port'] ?? 3306),
+            'name' => trim((string) ($_POST['db_name'] ?? '')),
+            'user' => trim((string) ($_POST['db_user'] ?? '')),
+            'pass' => (string) ($_POST['db_pass'] ?? ''),
+            'charset' => trim((string) ($_POST['db_charset'] ?? 'utf8mb4')),
+        ];
+
+        if (saveDbConfig($cfg)) {
+            $messages[] = 'Database config saved.';
+        } else {
+            $errors[] = 'Could not save database config file.';
+        }
+    }
+
+    if ($intent === 'test_db_config') {
+        $cfg = [
+            'host' => trim((string) ($_POST['db_host'] ?? '127.0.0.1')),
+            'port' => (int) ($_POST['db_port'] ?? 3306),
+            'name' => trim((string) ($_POST['db_name'] ?? '')),
+            'user' => trim((string) ($_POST['db_user'] ?? '')),
+            'pass' => (string) ($_POST['db_pass'] ?? ''),
+            'charset' => trim((string) ($_POST['db_charset'] ?? 'utf8mb4')),
+        ];
+        $test = testDbConnection($cfg);
+        if ($test['ok']) {
+            $messages[] = 'DB test successful: ' . (string) $test['message'];
+        } else {
+            $errors[] = 'DB test failed: ' . (string) $test['message'];
+        }
+    }
+
+
     if ($intent === 'change_password') {
         $current = (string) ($_POST['current_password'] ?? '');
         $new = (string) ($_POST['new_password'] ?? '');
@@ -534,6 +589,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+$dbConfig = loadDbConfig();
 $apartments = flattenApartments($buildings);
 $apartmentsByBuilding = [];
 foreach ($buildings as $building) {
@@ -674,6 +730,33 @@ foreach ($buildings as $building) {
                 </select>
                 <button class="btn accent" type="submit">Sync now</button>
             </form>
+
+            <form method="post" class="admin-card">
+                <h3>Database configuration</h3>
+                <input type="hidden" name="intent" value="save_db_config">
+                <input type="text" name="db_host" value="<?= htmlspecialchars((string) ($dbConfig['host'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB host" required>
+                <input type="number" name="db_port" value="<?= (int) ($dbConfig['port'] ?? 3306) ?>" placeholder="DB port" required>
+                <input type="text" name="db_name" value="<?= htmlspecialchars((string) ($dbConfig['name'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB name" required>
+                <input type="text" name="db_user" value="<?= htmlspecialchars((string) ($dbConfig['user'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB user" required>
+                <input type="password" name="db_pass" value="<?= htmlspecialchars((string) ($dbConfig['pass'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB password">
+                <input type="text" name="db_charset" value="<?= htmlspecialchars((string) ($dbConfig['charset'] ?? 'utf8mb4'), ENT_QUOTES, 'UTF-8') ?>" placeholder="utf8mb4" required>
+                <div class="reservation-inline-actions">
+                    <button class="btn" type="submit">Save DB config</button>
+                </div>
+            </form>
+
+            <form method="post" class="admin-card">
+                <h3>Test DB connection</h3>
+                <input type="hidden" name="intent" value="test_db_config">
+                <input type="text" name="db_host" value="<?= htmlspecialchars((string) ($dbConfig['host'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB host" required>
+                <input type="number" name="db_port" value="<?= (int) ($dbConfig['port'] ?? 3306) ?>" placeholder="DB port" required>
+                <input type="text" name="db_name" value="<?= htmlspecialchars((string) ($dbConfig['name'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB name" required>
+                <input type="text" name="db_user" value="<?= htmlspecialchars((string) ($dbConfig['user'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB user" required>
+                <input type="password" name="db_pass" value="<?= htmlspecialchars((string) ($dbConfig['pass'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB password">
+                <input type="text" name="db_charset" value="<?= htmlspecialchars((string) ($dbConfig['charset'] ?? 'utf8mb4'), ENT_QUOTES, 'UTF-8') ?>" placeholder="utf8mb4" required>
+                <button class="btn accent" type="submit">Test connection</button>
+            </form>
+
 
             <form method="post" class="admin-card">
                 <h3>Change admin password</h3>

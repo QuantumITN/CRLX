@@ -74,3 +74,36 @@ function dbIsReady(): bool
 {
     return getDbPdo() instanceof PDO;
 }
+
+
+function testDbConnection(?array $override = null): array
+{
+    $cfg = loadDbConfig();
+    if (is_array($override)) {
+        $cfg = array_merge($cfg, $override);
+    }
+
+    if (($cfg['name'] ?? '') === '' || ($cfg['user'] ?? '') === '') {
+        return ['ok' => false, 'message' => 'Database name and user are required.'];
+    }
+
+    try {
+        $dsn = sprintf(
+            'mysql:host=%s;port=%d;dbname=%s;charset=%s',
+            $cfg['host'],
+            (int) $cfg['port'],
+            $cfg['name'],
+            $cfg['charset'] ?? 'utf8mb4'
+        );
+        $pdo = new PDO($dsn, (string) $cfg['user'], (string) ($cfg['pass'] ?? ''), [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        ]);
+        $pdo->query('SELECT 1');
+
+        return ['ok' => true, 'message' => 'Connected successfully.'];
+    } catch (Throwable $e) {
+        return ['ok' => false, 'message' => 'Connection failed: ' . $e->getMessage()];
+    }
+}
+
