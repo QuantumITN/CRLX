@@ -183,6 +183,58 @@ function dbSaveDragUpdates(array $manual): bool
     }
 }
 
+
+function dbUpdateManualReservation(array $reservation): bool
+{
+    $pdo = getDbPdo();
+    if (!$pdo) {
+        return false;
+    }
+
+    $stmt = $pdo->prepare('UPDATE reservations SET apartment_id = :apartment_id, title = :title, status = :status, start_date = :start_date, end_date = :end_date, updated_at = NOW() WHERE reservation_uuid = :uuid AND source = "manual" AND archived_flag = 0');
+    $ok = $stmt->execute([
+        ':apartment_id' => (string) ($reservation['apartment_id'] ?? ''),
+        ':title' => (string) ($reservation['title'] ?? 'Manual reservation'),
+        ':status' => (string) ($reservation['status'] ?? 'reserved'),
+        ':start_date' => (string) ($reservation['start'] ?? ''),
+        ':end_date' => (string) ($reservation['end'] ?? ''),
+        ':uuid' => (string) ($reservation['id'] ?? ''),
+    ]);
+
+    if ($ok) {
+        $event = $pdo->prepare('INSERT INTO reservation_events (reservation_uuid, event_type, payload_json) VALUES (:uuid, :event_type, :payload)');
+        $event->execute([
+            ':uuid' => (string) ($reservation['id'] ?? ''),
+            ':event_type' => 'manual_update',
+            ':payload' => json_encode($reservation),
+        ]);
+    }
+
+    return $ok;
+}
+
+function dbDeleteManualReservation(string $reservationId): bool
+{
+    $pdo = getDbPdo();
+    if (!$pdo) {
+        return false;
+    }
+
+    $stmt = $pdo->prepare('DELETE FROM reservations WHERE reservation_uuid = :uuid AND source = "manual" AND archived_flag = 0');
+    $ok = $stmt->execute([':uuid' => $reservationId]);
+
+    if ($ok) {
+        $event = $pdo->prepare('INSERT INTO reservation_events (reservation_uuid, event_type, payload_json) VALUES (:uuid, :event_type, :payload)');
+        $event->execute([
+            ':uuid' => $reservationId,
+            ':event_type' => 'manual_deleted',
+            ':payload' => json_encode(['id' => $reservationId]),
+        ]);
+    }
+
+    return $ok;
+}
+
 function buildExportIcs(array $reservations): string
 {
     $lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//CLR Calendar//Portfolio Availability//EN', 'CALSCALE:GREGORIAN'];
@@ -288,6 +340,25 @@ if ($action === 'api_save_manual' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
+
+if ($action === 'api_update_reservation' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    header('Content-Type: application/json; charset=utf-8');
+    $payload = json_decode((string) file_get_contents('php://input'), true);
+    $reservation = is_array($payload['reservation'] ?? null) ? $payload['reservation'] : [];
+    $ok = dbUpdateManualReservation($reservation);
+    echo json_encode(['ok' => $ok]);
+    exit;
+}
+
+if ($action === 'api_delete_reservation' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    header('Content-Type: application/json; charset=utf-8');
+    $payload = json_decode((string) file_get_contents('php://input'), true);
+    $reservationId = (string) ($payload['id'] ?? '');
+    $ok = $reservationId !== '' && dbDeleteManualReservation($reservationId);
+    echo json_encode(['ok' => $ok]);
+    exit;
+}
+
 $interval = (int) ($settings['sync_interval_minutes'] ?? 30);
 $lastSyncTs = isset($syncMeta['last_sync']) ? strtotime((string) $syncMeta['last_sync']) : false;
 if ($lastSyncTs === false || (time() - $lastSyncTs) >= ($interval * 60)) {
@@ -361,6 +432,44 @@ $appData = [
         </div>
     </section>
 </main>
+
+<div id="reservation-modal" class="modal hidden" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal="1"></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-label="Reservation details">
+        <div class="modal-head">
+            <h3>Reservation summary</h3>
+            <button class="btn ghost small" type="button" id="modal-close">Close</button>
+        </div>
+        <form id="reservation-modal-form" class="modal-form">
+            <div class="modal-grid">
+                <label>Title <input type="text" id="modal-title"></label>
+                <label>Status
+                    <select id="modal-status">
+                        <option value="reserved">Reserved</option>
+                        <option value="booked">Booked</option>
+                        <option value="checked_out">Checked out</option>
+                        <option value="checkout_tomorrow">Checkout tomorrow</option>
+                        <option value="maintenance">Maintenance</option>
+                        <option value="cancelled">Cancelled</option>
+                    </select>
+                </label>
+                <label>Check-in <input type="date" id="modal-start"></label>
+                <label>Check-out <input type="date" id="modal-end"></label>
+                <label>Apartment
+                    <select id="modal-apartment"></select>
+                </label>
+                <label>Source <input type="text" id="modal-source" disabled></label>
+            </div>
+            <p class="tiny" id="modal-note"></p>
+            <div class="modal-actions">
+                <button type="button" class="btn" id="modal-save">Update</button>
+                <button type="button" class="btn" id="modal-cancel-status">Cancel reservation</button>
+                <button type="button" class="btn" id="modal-delete">Delete</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
 window.APP = <?= json_encode($appData, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?: '{}' ?>;
 </script>

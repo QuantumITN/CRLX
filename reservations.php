@@ -91,13 +91,78 @@ function dbInsertManualReservation(array $r): bool
     return $ok;
 }
 
+function dbUpdateManualReservation(array $r): bool
+{
+    $pdo = getDbPdo();
+    if (!$pdo) {
+        return false;
+    }
+
+    $stmt = $pdo->prepare('UPDATE reservations SET apartment_id = :apartment_id, title = :title, status = :status, start_date = :start_date, end_date = :end_date, customer_first_name = :first, customer_last_name = :last, customer_email = :email, customer_phone = :phone, booking_channel = :channel, payment_status = :payment_status, updated_at = NOW() WHERE reservation_uuid = :uuid AND source = "manual" AND archived_flag = 0');
+    $ok = $stmt->execute([
+        ':apartment_id' => (string) ($r['apartment_id'] ?? ''),
+        ':title' => (string) ($r['title'] ?? 'Manual reservation'),
+        ':status' => (string) ($r['status'] ?? 'reserved'),
+        ':start_date' => (string) ($r['start_date'] ?? ''),
+        ':end_date' => (string) ($r['end_date'] ?? ''),
+        ':first' => (string) ($r['customer_first_name'] ?? ''),
+        ':last' => (string) ($r['customer_last_name'] ?? ''),
+        ':email' => (string) ($r['customer_email'] ?? ''),
+        ':phone' => (string) ($r['customer_phone'] ?? ''),
+        ':channel' => (string) ($r['booking_channel'] ?? ''),
+        ':payment_status' => (string) ($r['payment_status'] ?? ''),
+        ':uuid' => (string) ($r['reservation_uuid'] ?? ''),
+    ]);
+
+    if ($ok) {
+        $ev = $pdo->prepare('INSERT INTO reservation_events (reservation_uuid, event_type, payload_json) VALUES (:uuid, "manual_updated", :payload)');
+        $ev->execute([':uuid' => (string) ($r['reservation_uuid'] ?? ''), ':payload' => json_encode($r)]);
+    }
+
+    return $ok;
+}
+
+function dbCancelManualReservation(string $reservationId): bool
+{
+    $pdo = getDbPdo();
+    if (!$pdo) {
+        return false;
+    }
+
+    $stmt = $pdo->prepare('UPDATE reservations SET status = "cancelled", updated_at = NOW() WHERE reservation_uuid = :uuid AND source = "manual" AND archived_flag = 0');
+    $ok = $stmt->execute([':uuid' => $reservationId]);
+    if ($ok) {
+        $ev = $pdo->prepare('INSERT INTO reservation_events (reservation_uuid, event_type, payload_json) VALUES (:uuid, "manual_cancelled", :payload)');
+        $ev->execute([':uuid' => $reservationId, ':payload' => json_encode(['id' => $reservationId])]);
+    }
+
+    return $ok;
+}
+
+function dbDeleteManualReservation(string $reservationId): bool
+{
+    $pdo = getDbPdo();
+    if (!$pdo) {
+        return false;
+    }
+
+    $stmt = $pdo->prepare('DELETE FROM reservations WHERE reservation_uuid = :uuid AND source = "manual" AND archived_flag = 0');
+    $ok = $stmt->execute([':uuid' => $reservationId]);
+    if ($ok) {
+        $ev = $pdo->prepare('INSERT INTO reservation_events (reservation_uuid, event_type, payload_json) VALUES (:uuid, "manual_deleted", :payload)');
+        $ev->execute([':uuid' => $reservationId, ':payload' => json_encode(['id' => $reservationId])]);
+    }
+
+    return $ok;
+}
+
 function dbRecentReservations(int $limit = 150): array
 {
     $pdo = getDbPdo();
     if (!$pdo) {
         return [];
     }
-    $stmt = $pdo->prepare('SELECT reservation_uuid, apartment_id, title, status, start_date, end_date, customer_first_name, customer_last_name, customer_email, customer_phone, price_total, price_currency, payment_status, booking_channel, created_at FROM reservations WHERE archived_flag = 0 ORDER BY start_date DESC LIMIT :lim');
+    $stmt = $pdo->prepare('SELECT reservation_uuid, apartment_id, source, title, status, start_date, end_date, customer_first_name, customer_last_name, customer_email, customer_phone, price_total, price_currency, payment_status, booking_channel, created_at FROM reservations WHERE archived_flag = 0 ORDER BY start_date DESC LIMIT :lim');
     $stmt->bindValue(':lim', $limit, PDO::PARAM_INT);
     $stmt->execute();
 
@@ -108,42 +173,97 @@ $messages = [];
 $errors = [];
 $buildings = readJson(BUILDINGS_FILE, []);
 $apartments = flattenApartments($buildings);
+$apartmentNameById = [];
+foreach ($apartments as $apartment) {
+    $apartmentNameById[(string) $apartment['id']] = (string) ($apartment['building_name'] . ' - ' . $apartment['name']);
+}
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['intent'] ?? '') === 'create_manual_reservation') {
-    $reservation = [
-        'id' => generateId('m'),
-        'apartment_id' => trim((string) ($_POST['apartment_id'] ?? '')),
-        'title' => trim((string) ($_POST['title'] ?? 'Direct Booking')),
-        'status' => trim((string) ($_POST['status'] ?? 'reserved')),
-        'start_date' => trim((string) ($_POST['start_date'] ?? '')),
-        'end_date' => trim((string) ($_POST['end_date'] ?? '')),
-        'customer_first_name' => trim((string) ($_POST['customer_first_name'] ?? '')),
-        'customer_last_name' => trim((string) ($_POST['customer_last_name'] ?? '')),
-        'customer_email' => trim((string) ($_POST['customer_email'] ?? '')),
-        'customer_phone' => trim((string) ($_POST['customer_phone'] ?? '')),
-        'customer_country' => trim((string) ($_POST['customer_country'] ?? '')),
-        'customer_document' => trim((string) ($_POST['customer_document'] ?? '')),
-        'adults' => (int) ($_POST['adults'] ?? 1),
-        'children' => (int) ($_POST['children'] ?? 0),
-        'notes' => trim((string) ($_POST['notes'] ?? '')),
-        'price_total' => trim((string) ($_POST['price_total'] ?? '')),
-        'price_currency' => trim((string) ($_POST['price_currency'] ?? 'EUR')),
-        'tax_amount' => trim((string) ($_POST['tax_amount'] ?? '')),
-        'cleaning_fee' => trim((string) ($_POST['cleaning_fee'] ?? '')),
-        'discount_amount' => trim((string) ($_POST['discount_amount'] ?? '')),
-        'payment_status' => trim((string) ($_POST['payment_status'] ?? 'pending')),
-        'payment_method' => trim((string) ($_POST['payment_method'] ?? '')),
-        'booking_channel' => trim((string) ($_POST['booking_channel'] ?? 'direct')),
-    ];
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $intent = (string) ($_POST['intent'] ?? '');
 
-    if ($reservation['apartment_id'] === '' || $reservation['start_date'] === '' || $reservation['end_date'] === '') {
-        $errors[] = 'Apartment, check-in, and check-out are required.';
-    } elseif (!dbIsReady()) {
-        $errors[] = 'MySQL is not configured. Configure DB first.';
-    } elseif (dbInsertManualReservation($reservation)) {
-        $messages[] = 'Manual reservation saved successfully.';
-    } else {
-        $errors[] = 'Could not save reservation in MySQL.';
+    if ($intent === 'create_manual_reservation') {
+        $reservation = [
+            'id' => generateId('m'),
+            'apartment_id' => trim((string) ($_POST['apartment_id'] ?? '')),
+            'title' => trim((string) ($_POST['title'] ?? 'Direct Booking')),
+            'status' => trim((string) ($_POST['status'] ?? 'reserved')),
+            'start_date' => trim((string) ($_POST['start_date'] ?? '')),
+            'end_date' => trim((string) ($_POST['end_date'] ?? '')),
+            'customer_first_name' => trim((string) ($_POST['customer_first_name'] ?? '')),
+            'customer_last_name' => trim((string) ($_POST['customer_last_name'] ?? '')),
+            'customer_email' => trim((string) ($_POST['customer_email'] ?? '')),
+            'customer_phone' => trim((string) ($_POST['customer_phone'] ?? '')),
+            'customer_country' => trim((string) ($_POST['customer_country'] ?? '')),
+            'customer_document' => trim((string) ($_POST['customer_document'] ?? '')),
+            'adults' => (int) ($_POST['adults'] ?? 1),
+            'children' => (int) ($_POST['children'] ?? 0),
+            'notes' => trim((string) ($_POST['notes'] ?? '')),
+            'price_total' => trim((string) ($_POST['price_total'] ?? '')),
+            'price_currency' => trim((string) ($_POST['price_currency'] ?? 'EUR')),
+            'tax_amount' => trim((string) ($_POST['tax_amount'] ?? '')),
+            'cleaning_fee' => trim((string) ($_POST['cleaning_fee'] ?? '')),
+            'discount_amount' => trim((string) ($_POST['discount_amount'] ?? '')),
+            'payment_status' => trim((string) ($_POST['payment_status'] ?? 'pending')),
+            'payment_method' => trim((string) ($_POST['payment_method'] ?? '')),
+            'booking_channel' => trim((string) ($_POST['booking_channel'] ?? 'direct')),
+        ];
+
+        if ($reservation['apartment_id'] === '' || $reservation['start_date'] === '' || $reservation['end_date'] === '') {
+            $errors[] = 'Apartment, check-in, and check-out are required.';
+        } elseif (!dbIsReady()) {
+            $errors[] = 'MySQL is not configured. Configure DB first.';
+        } elseif (dbInsertManualReservation($reservation)) {
+            $messages[] = 'Manual reservation saved successfully.';
+        } else {
+            $errors[] = 'Could not save reservation in MySQL.';
+        }
+    }
+
+    if ($intent === 'update_manual_reservation') {
+        $update = [
+            'reservation_uuid' => trim((string) ($_POST['reservation_uuid'] ?? '')),
+            'apartment_id' => trim((string) ($_POST['apartment_id'] ?? '')),
+            'title' => trim((string) ($_POST['title'] ?? '')),
+            'status' => trim((string) ($_POST['status'] ?? 'reserved')),
+            'start_date' => trim((string) ($_POST['start_date'] ?? '')),
+            'end_date' => trim((string) ($_POST['end_date'] ?? '')),
+            'customer_first_name' => trim((string) ($_POST['customer_first_name'] ?? '')),
+            'customer_last_name' => trim((string) ($_POST['customer_last_name'] ?? '')),
+            'customer_email' => trim((string) ($_POST['customer_email'] ?? '')),
+            'customer_phone' => trim((string) ($_POST['customer_phone'] ?? '')),
+            'booking_channel' => trim((string) ($_POST['booking_channel'] ?? '')),
+            'payment_status' => trim((string) ($_POST['payment_status'] ?? '')),
+        ];
+
+        if ($update['reservation_uuid'] === '' || $update['apartment_id'] === '' || $update['start_date'] === '' || $update['end_date'] === '') {
+            $errors[] = 'Reservation ID, apartment, check-in, and check-out are required for update.';
+        } elseif (dbUpdateManualReservation($update)) {
+            $messages[] = 'Reservation updated successfully.';
+        } else {
+            $errors[] = 'Could not update reservation. Only manual reservations can be edited.';
+        }
+    }
+
+    if ($intent === 'cancel_manual_reservation') {
+        $reservationId = trim((string) ($_POST['reservation_uuid'] ?? ''));
+        if ($reservationId === '') {
+            $errors[] = 'Reservation ID required to cancel.';
+        } elseif (dbCancelManualReservation($reservationId)) {
+            $messages[] = 'Reservation cancelled.';
+        } else {
+            $errors[] = 'Could not cancel reservation. Only manual reservations can be cancelled.';
+        }
+    }
+
+    if ($intent === 'delete_manual_reservation') {
+        $reservationId = trim((string) ($_POST['reservation_uuid'] ?? ''));
+        if ($reservationId === '') {
+            $errors[] = 'Reservation ID required to delete.';
+        } elseif (dbDeleteManualReservation($reservationId)) {
+            $messages[] = 'Reservation deleted.';
+        } else {
+            $errors[] = 'Could not delete reservation. Only manual reservations can be deleted.';
+        }
     }
 }
 
@@ -179,6 +299,7 @@ $recentReservations = dbRecentReservations();
                 <option value="booked">Booked</option>
                 <option value="checked_out">Checked out</option>
                 <option value="checkout_tomorrow">Checkout tomorrow</option>
+                <option value="cancelled">Cancelled</option>
             </select>
             <label>Check-in <input type="date" name="start_date" required></label>
             <label>Check-out <input type="date" name="end_date" required></label>
@@ -213,13 +334,60 @@ $recentReservations = dbRecentReservations();
         <?php else: ?>
             <div class="feed-building">
                 <?php foreach ($recentReservations as $r): ?>
-                    <div class="feed-row">
-                        <strong><?= htmlspecialchars((string) $r['title'], ENT_QUOTES, 'UTF-8') ?></strong>
-                        <span>Apartment ID: <?= htmlspecialchars((string) $r['apartment_id'], ENT_QUOTES, 'UTF-8') ?></span>
+                    <details class="feed-row reservation-item">
+                        <summary>
+                            <strong><?= htmlspecialchars((string) $r['title'], ENT_QUOTES, 'UTF-8') ?></strong>
+                            <span class="tiny">(<?= htmlspecialchars((string) strtoupper((string) $r['source']), ENT_QUOTES, 'UTF-8') ?>)</span>
+                        </summary>
+                        <span>Apartment: <?= htmlspecialchars((string) ($apartmentNameById[(string) $r['apartment_id']] ?? $r['apartment_id']), ENT_QUOTES, 'UTF-8') ?></span>
                         <span>Dates: <?= htmlspecialchars((string) $r['start_date'], ENT_QUOTES, 'UTF-8') ?> → <?= htmlspecialchars((string) $r['end_date'], ENT_QUOTES, 'UTF-8') ?></span>
+                        <span>Status: <?= htmlspecialchars((string) $r['status'], ENT_QUOTES, 'UTF-8') ?></span>
                         <span>Guest: <?= htmlspecialchars(trim((string) (($r['customer_first_name'] ?? '') . ' ' . ($r['customer_last_name'] ?? ''))), ENT_QUOTES, 'UTF-8') ?></span>
+                        <span>Email: <?= htmlspecialchars((string) ($r['customer_email'] ?? ''), ENT_QUOTES, 'UTF-8') ?></span>
+                        <span>Phone: <?= htmlspecialchars((string) ($r['customer_phone'] ?? ''), ENT_QUOTES, 'UTF-8') ?></span>
                         <span>Price: <?= htmlspecialchars((string) (($r['price_total'] ?? '') . ' ' . ($r['price_currency'] ?? '')), ENT_QUOTES, 'UTF-8') ?></span>
-                    </div>
+
+                        <?php if ((string) ($r['source'] ?? '') === 'manual'): ?>
+                            <form method="post" class="reservation-actions-grid">
+                                <input type="hidden" name="intent" value="update_manual_reservation">
+                                <input type="hidden" name="reservation_uuid" value="<?= htmlspecialchars((string) $r['reservation_uuid'], ENT_QUOTES, 'UTF-8') ?>">
+                                <select name="apartment_id" required>
+                                    <?php foreach ($apartments as $apartment): ?>
+                                        <option value="<?= htmlspecialchars((string) $apartment['id'], ENT_QUOTES, 'UTF-8') ?>" <?= ((string) $apartment['id'] === (string) $r['apartment_id']) ? 'selected' : '' ?>><?= htmlspecialchars((string) ($apartment['building_name'] . ' - ' . $apartment['name']), ENT_QUOTES, 'UTF-8') ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <input type="text" name="title" value="<?= htmlspecialchars((string) $r['title'], ENT_QUOTES, 'UTF-8') ?>" placeholder="Title">
+                                <select name="status">
+                                    <?php foreach (['reserved', 'booked', 'checked_out', 'checkout_tomorrow', 'cancelled'] as $status): ?>
+                                        <option value="<?= htmlspecialchars($status, ENT_QUOTES, 'UTF-8') ?>" <?= ((string) $r['status'] === $status) ? 'selected' : '' ?>><?= htmlspecialchars(ucwords(str_replace('_', ' ', $status)), ENT_QUOTES, 'UTF-8') ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <input type="date" name="start_date" value="<?= htmlspecialchars((string) $r['start_date'], ENT_QUOTES, 'UTF-8') ?>" required>
+                                <input type="date" name="end_date" value="<?= htmlspecialchars((string) $r['end_date'], ENT_QUOTES, 'UTF-8') ?>" required>
+                                <input type="text" name="customer_first_name" value="<?= htmlspecialchars((string) ($r['customer_first_name'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="First name">
+                                <input type="text" name="customer_last_name" value="<?= htmlspecialchars((string) ($r['customer_last_name'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Last name">
+                                <input type="email" name="customer_email" value="<?= htmlspecialchars((string) ($r['customer_email'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Email">
+                                <input type="text" name="customer_phone" value="<?= htmlspecialchars((string) ($r['customer_phone'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Phone">
+                                <input type="text" name="booking_channel" value="<?= htmlspecialchars((string) ($r['booking_channel'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Channel">
+                                <input type="text" name="payment_status" value="<?= htmlspecialchars((string) ($r['payment_status'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Payment status">
+                                <button class="btn" type="submit">Update</button>
+                            </form>
+                            <div class="reservation-inline-actions">
+                                <form method="post">
+                                    <input type="hidden" name="intent" value="cancel_manual_reservation">
+                                    <input type="hidden" name="reservation_uuid" value="<?= htmlspecialchars((string) $r['reservation_uuid'], ENT_QUOTES, 'UTF-8') ?>">
+                                    <button class="btn" type="submit">Cancel</button>
+                                </form>
+                                <form method="post">
+                                    <input type="hidden" name="intent" value="delete_manual_reservation">
+                                    <input type="hidden" name="reservation_uuid" value="<?= htmlspecialchars((string) $r['reservation_uuid'], ENT_QUOTES, 'UTF-8') ?>">
+                                    <button class="btn" type="submit">Delete</button>
+                                </form>
+                            </div>
+                        <?php else: ?>
+                            <p class="tiny">This is an imported iCal reservation and cannot be edited from this page.</p>
+                        <?php endif; ?>
+                    </details>
                 <?php endforeach; ?>
             </div>
         <?php endif; ?>
