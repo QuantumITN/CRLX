@@ -478,6 +478,7 @@ $appData = [
     'monthStart' => $monthStart->format('Y-m-d'),
     'monthDays' => (int) $monthStart->format('t'),
     'monthLabel' => $monthStart->format('F Y'),
+    'openReservationId' => trim((string) ($_GET['open_reservation'] ?? '')),
     'statusColors' => [
         'booked' => '#2dc26b',
         'reserved' => '#3498ff',

@@ -16,6 +16,7 @@ const BUILDINGS_FILE = DATA_DIR . '/buildings.json';
 const SETTINGS_FILE = DATA_DIR . '/settings.json';
 const SYNC_META_FILE = DATA_DIR . '/sync_meta.json';
 const DB_CONFIG_FILE = DATA_DIR . '/db_config.php';
+const NOTIF_SETTINGS_FILE = DATA_DIR . '/notification_settings.json';
 
 if (!is_dir(DATA_DIR)) {
     mkdir(DATA_DIR, 0775, true);
@@ -188,6 +189,24 @@ function deleteReservationsByApartmentIds(array $apartmentIds): void
     }
 }
 
+
+
+function readNotifSettings(): array
+{
+    $defaults = ['reservation_made' => true, 'checkout_tomorrow' => true, 'sync_failed' => true];
+    if (!file_exists(NOTIF_SETTINGS_FILE)) {
+        return $defaults;
+    }
+    $raw = file_get_contents(NOTIF_SETTINGS_FILE);
+    $json = is_string($raw) ? json_decode($raw, true) : null;
+
+    return is_array($json) ? array_merge($defaults, $json) : $defaults;
+}
+
+function writeNotifSettings(array $settings): bool
+{
+    return file_put_contents(NOTIF_SETTINGS_FILE, json_encode($settings, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)) !== false;
+}
 
 function saveDbConfig(array $cfg): bool
 {
@@ -577,6 +596,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
 
+
+    if ($intent === 'save_notification_settings') {
+        $ns = [
+            'reservation_made' => isset($_POST['reservation_made']),
+            'checkout_tomorrow' => isset($_POST['checkout_tomorrow']),
+            'sync_failed' => isset($_POST['sync_failed']),
+        ];
+        if (writeNotifSettings($ns)) {
+            $messages[] = 'Notification settings updated.';
+        } else {
+            $errors[] = 'Could not save notification settings.';
+        }
+    }
+
     if ($intent === 'change_password') {
         $current = (string) ($_POST['current_password'] ?? '');
         $new = (string) ($_POST['new_password'] ?? '');
@@ -625,6 +658,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $dbConfig = loadDbConfig();
+$notifSettings = readNotifSettings();
 $apartments = flattenApartments($buildings);
 $apartmentsByBuilding = [];
 foreach ($buildings as $building) {
@@ -657,6 +691,7 @@ foreach ($buildings as $building) {
         <?php foreach ($messages as $message): ?><div class="flash success"><?= htmlspecialchars($message, ENT_QUOTES, 'UTF-8') ?></div><?php endforeach; ?>
 
         <h2>Admin Tools</h2>
+        <details class="accordion-group" open><summary>Portfolio + sync controls</summary><p class="tiny">Expand/collapse sections to keep the page cleaner on mobile.</p></details>
         <div class="admin-grid">
             <form method="post" class="admin-card">
                 <h3>Add building</h3>
@@ -792,6 +827,28 @@ foreach ($buildings as $building) {
                 <button class="btn accent" type="submit">Test connection</button>
             </form>
 
+
+            
+            <form method="post" class="admin-card">
+                <h3>Notification settings</h3>
+                <input type="hidden" name="intent" value="save_notification_settings">
+                <label><input type="checkbox" name="reservation_made" <?= !empty($notifSettings['reservation_made']) ? 'checked' : '' ?>> Reservation made (manual or synced)</label>
+                <label><input type="checkbox" name="checkout_tomorrow" <?= !empty($notifSettings['checkout_tomorrow']) ? 'checked' : '' ?>> Tomorrow checkouts</label>
+                <label><input type="checkbox" name="sync_failed" <?= !empty($notifSettings['sync_failed']) ? 'checked' : '' ?>> Sync/update unsuccessful</label>
+                <button class="btn" type="submit">Save notifications</button>
+            </form>
+
+            <article class="admin-card">
+                <h3>File sharing service</h3>
+                <p>Folders, uploads, and file editing/deletion.</p>
+                <a class="btn accent" href="file_sharing.php">Open File sharing</a>
+            </article>
+
+            <article class="admin-card">
+                <h3>Reports</h3>
+                <p>Generate reservation charts by dates and scope.</p>
+                <a class="btn accent" href="reports.php">Open Reports</a>
+            </article>
 
             <form method="post" class="admin-card">
                 <h3>Change admin password</h3>

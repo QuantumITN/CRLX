@@ -12,6 +12,7 @@
 
   const monthStart = new Date(`${state.monthStart}T00:00:00Z`);
   const monthDays = Number(state.monthDays || 30);
+  const openReservationId = String(state.openReservationId || '');
 
   const statusColors = state.statusColors || {
     booked: '#2dc26b',
@@ -470,4 +471,9 @@
   buildBoard();
   placeReservations();
   wireModalEvents();
+
+  if (openReservationId) {
+    const target = allReservations.find((r) => r.id === openReservationId);
+    if (target) openModal(target);
+  }
 })();
