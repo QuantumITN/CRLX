@@ -38,6 +38,7 @@ function flattenApartments(array $buildings): array
     foreach ($buildings as $building) {
         foreach (($building['apartments'] ?? []) as $apartment) {
             $rows[] = [
+                'building_id' => (string) ($building['id'] ?? ''),
                 'building_name' => (string) ($building['name'] ?? 'Building'),
                 'id' => (string) ($apartment['id'] ?? ''),
                 'name' => (string) ($apartment['name'] ?? 'Apartment'),
@@ -47,7 +48,6 @@ function flattenApartments(array $buildings): array
 
     return $rows;
 }
-
 
 function dbHasOverlap(string $apartmentId, string $startDate, string $endDate, ?string $excludeUuid = null): bool
 {
@@ -183,15 +183,32 @@ function dbDeleteManualReservation(string $reservationId): bool
     return $ok;
 }
 
-function dbRecentReservations(int $limit = 150): array
+function dbFilteredReservations(array $filters, int $limit = 300): array
 {
     $pdo = getDbPdo();
     if (!$pdo) {
         return [];
     }
-    $stmt = $pdo->prepare('SELECT reservation_uuid, apartment_id, source, title, status, start_date, end_date, customer_first_name, customer_last_name, customer_email, customer_phone, price_total, price_currency, payment_status, booking_channel, created_at FROM reservations WHERE archived_flag = 0 ORDER BY start_date DESC LIMIT :lim');
-    $stmt->bindValue(':lim', $limit, PDO::PARAM_INT);
-    $stmt->execute();
+
+    $sql = 'SELECT id, reservation_uuid, apartment_id, source, title, status, start_date, end_date, customer_first_name, customer_last_name, customer_email, customer_phone, price_total, price_currency, payment_status, booking_channel, created_at FROM reservations WHERE archived_flag = 0';
+    $params = [];
+
+    if (($filters['from'] ?? '') !== '') {
+        $sql .= ' AND start_date >= :from_date';
+        $params[':from_date'] = (string) $filters['from'];
+    }
+    if (($filters['to'] ?? '') !== '') {
+        $sql .= ' AND end_date <= :to_date';
+        $params[':to_date'] = (string) $filters['to'];
+    }
+    if (($filters['apartment_id'] ?? '') !== '') {
+        $sql .= ' AND apartment_id = :apartment_id';
+        $params[':apartment_id'] = (string) $filters['apartment_id'];
+    }
+
+    $sql .= ' ORDER BY start_date DESC LIMIT ' . max(10, min(1000, $limit));
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
 
     return $stmt->fetchAll() ?: [];
 }
@@ -201,8 +218,10 @@ $errors = [];
 $buildings = readJson(BUILDINGS_FILE, []);
 $apartments = flattenApartments($buildings);
 $apartmentNameById = [];
+$buildingNameByApartmentId = [];
 foreach ($apartments as $apartment) {
     $apartmentNameById[(string) $apartment['id']] = (string) ($apartment['building_name'] . ' - ' . $apartment['name']);
+    $buildingNameByApartmentId[(string) $apartment['id']] = (string) ($apartment['building_name'] ?? '');
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -298,7 +317,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$recentReservations = dbRecentReservations();
+$filterFrom = trim((string) ($_GET['from_date'] ?? ''));
+$filterTo = trim((string) ($_GET['to_date'] ?? ''));
+$filterBuilding = trim((string) ($_GET['building_id'] ?? ''));
+$filterApartment = trim((string) ($_GET['apartment_id'] ?? ''));
+if ($filterBuilding !== '' && $filterApartment === '') {
+    $aptIdsForBuilding = array_map(static fn(array $a): string => $a['id'], array_filter($apartments, static fn(array $a): bool => $a['building_id'] === $filterBuilding));
+} else {
+    $aptIdsForBuilding = [];
+}
+
+$filters = ['from' => $filterFrom, 'to' => $filterTo, 'apartment_id' => $filterApartment];
+$recentReservations = dbFilteredReservations($filters);
+if ($filterBuilding !== '' && $filterApartment === '') {
+    $recentReservations = array_values(array_filter($recentReservations, static fn(array $r): bool => in_array((string) $r['apartment_id'], $aptIdsForBuilding, true)));
+}
 ?>
 <!doctype html>
 <html lang="en">
@@ -359,67 +392,97 @@ $recentReservations = dbRecentReservations();
     </section>
 
     <section class="panel">
-        <h2>Recent reservations</h2>
-        <?php if (empty($recentReservations)): ?>
-            <p class="tiny">No reservations found.</p>
-        <?php else: ?>
-            <div class="feed-building">
-                <?php foreach ($recentReservations as $r): ?>
-                    <details class="feed-row reservation-item">
-                        <summary>
-                            <strong><?= htmlspecialchars((string) $r['title'], ENT_QUOTES, 'UTF-8') ?></strong>
-                            <span class="tiny">(<?= htmlspecialchars((string) strtoupper((string) $r['source']), ENT_QUOTES, 'UTF-8') ?>)</span>
-                        </summary>
-                        <span>Apartment: <?= htmlspecialchars((string) ($apartmentNameById[(string) $r['apartment_id']] ?? $r['apartment_id']), ENT_QUOTES, 'UTF-8') ?></span>
-                        <span>Dates: <?= htmlspecialchars((string) $r['start_date'], ENT_QUOTES, 'UTF-8') ?> → <?= htmlspecialchars((string) $r['end_date'], ENT_QUOTES, 'UTF-8') ?></span>
-                        <span>Status: <?= htmlspecialchars((string) $r['status'], ENT_QUOTES, 'UTF-8') ?></span>
-                        <span>Guest: <?= htmlspecialchars(trim((string) (($r['customer_first_name'] ?? '') . ' ' . ($r['customer_last_name'] ?? ''))), ENT_QUOTES, 'UTF-8') ?></span>
-                        <span>Email: <?= htmlspecialchars((string) ($r['customer_email'] ?? ''), ENT_QUOTES, 'UTF-8') ?></span>
-                        <span>Phone: <?= htmlspecialchars((string) ($r['customer_phone'] ?? ''), ENT_QUOTES, 'UTF-8') ?></span>
-                        <span>Price: <?= htmlspecialchars((string) (($r['price_total'] ?? '') . ' ' . ($r['price_currency'] ?? '')), ENT_QUOTES, 'UTF-8') ?></span>
-
-                        <?php if ((string) ($r['source'] ?? '') === 'manual'): ?>
-                            <form method="post" class="reservation-actions-grid">
-                                <input type="hidden" name="intent" value="update_manual_reservation">
-                                <input type="hidden" name="reservation_uuid" value="<?= htmlspecialchars((string) $r['reservation_uuid'], ENT_QUOTES, 'UTF-8') ?>">
-                                <select name="apartment_id" required>
-                                    <?php foreach ($apartments as $apartment): ?>
-                                        <option value="<?= htmlspecialchars((string) $apartment['id'], ENT_QUOTES, 'UTF-8') ?>" <?= ((string) $apartment['id'] === (string) $r['apartment_id']) ? 'selected' : '' ?>><?= htmlspecialchars((string) ($apartment['building_name'] . ' - ' . $apartment['name']), ENT_QUOTES, 'UTF-8') ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                                <input type="text" name="title" value="<?= htmlspecialchars((string) $r['title'], ENT_QUOTES, 'UTF-8') ?>" placeholder="Title">
-                                <select name="status">
-                                    <?php foreach (['reserved', 'booked', 'checked_out', 'checkout_tomorrow', 'cancelled'] as $status): ?>
-                                        <option value="<?= htmlspecialchars($status, ENT_QUOTES, 'UTF-8') ?>" <?= ((string) $r['status'] === $status) ? 'selected' : '' ?>><?= htmlspecialchars(ucwords(str_replace('_', ' ', $status)), ENT_QUOTES, 'UTF-8') ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                                <input type="date" name="start_date" value="<?= htmlspecialchars((string) $r['start_date'], ENT_QUOTES, 'UTF-8') ?>" required>
-                                <input type="date" name="end_date" value="<?= htmlspecialchars((string) $r['end_date'], ENT_QUOTES, 'UTF-8') ?>" required>
-                                <input type="text" name="customer_first_name" value="<?= htmlspecialchars((string) ($r['customer_first_name'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="First name">
-                                <input type="text" name="customer_last_name" value="<?= htmlspecialchars((string) ($r['customer_last_name'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Last name">
-                                <input type="email" name="customer_email" value="<?= htmlspecialchars((string) ($r['customer_email'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Email">
-                                <input type="text" name="customer_phone" value="<?= htmlspecialchars((string) ($r['customer_phone'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Phone">
-                                <input type="text" name="booking_channel" value="<?= htmlspecialchars((string) ($r['booking_channel'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Channel">
-                                <input type="text" name="payment_status" value="<?= htmlspecialchars((string) ($r['payment_status'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Payment status">
-                                <button class="btn" type="submit" onclick="return confirm('Confirm reservation update?')">Update</button>
-                            </form>
-                            <div class="reservation-inline-actions">
-                                <form method="post">
-                                    <input type="hidden" name="intent" value="cancel_manual_reservation">
-                                    <input type="hidden" name="reservation_uuid" value="<?= htmlspecialchars((string) $r['reservation_uuid'], ENT_QUOTES, 'UTF-8') ?>">
-                                    <button class="btn" type="submit" onclick="return confirm('Confirm cancellation of this reservation?')">Cancel</button>
-                                </form>
-                                <form method="post">
-                                    <input type="hidden" name="intent" value="delete_manual_reservation">
-                                    <input type="hidden" name="reservation_uuid" value="<?= htmlspecialchars((string) $r['reservation_uuid'], ENT_QUOTES, 'UTF-8') ?>">
-                                    <button class="btn" type="submit" onclick="return confirm('Delete this reservation permanently?')">Delete</button>
-                                </form>
-                            </div>
-                        <?php else: ?>
-                            <p class="tiny">This is an imported iCal reservation and cannot be edited from this page.</p>
-                        <?php endif; ?>
-                    </details>
+        <h2>Past reservations</h2>
+        <form method="get" class="feed-row reservation-form-grid" id="reservations-filter-form">
+            <label>From <input type="date" name="from_date" value="<?= htmlspecialchars($filterFrom, ENT_QUOTES, 'UTF-8') ?>" onchange="this.form.submit()"></label>
+            <label>To <input type="date" name="to_date" value="<?= htmlspecialchars($filterTo, ENT_QUOTES, 'UTF-8') ?>" onchange="this.form.submit()"></label>
+            <select name="building_id" onchange="this.form.submit()">
+                <option value="">All buildings</option>
+                <?php foreach ($buildings as $building): ?>
+                    <option value="<?= htmlspecialchars((string) ($building['id'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" <?= ((string) ($building['id'] ?? '') === $filterBuilding) ? 'selected' : '' ?>><?= htmlspecialchars((string) ($building['name'] ?? 'Building'), ENT_QUOTES, 'UTF-8') ?></option>
                 <?php endforeach; ?>
+            </select>
+            <select name="apartment_id" onchange="this.form.submit()">
+                <option value="">All apartments</option>
+                <?php foreach ($apartments as $apartment): ?>
+                    <?php if ($filterBuilding !== '' && (string) $apartment['building_id'] !== $filterBuilding) { continue; } ?>
+                    <option value="<?= htmlspecialchars((string) $apartment['id'], ENT_QUOTES, 'UTF-8') ?>" <?= ((string) $apartment['id'] === $filterApartment) ? 'selected' : '' ?>><?= htmlspecialchars((string) ($apartment['building_name'] . ' - ' . $apartment['name']), ENT_QUOTES, 'UTF-8') ?></option>
+                <?php endforeach; ?>
+            </select>
+        </form>
+
+        <?php if (empty($recentReservations)): ?>
+            <p class="tiny">No reservations found for selected filters.</p>
+        <?php else: ?>
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Unique ID</th>
+                            <th>Type</th>
+                            <th>Title</th>
+                            <th>Building</th>
+                            <th>Apartment</th>
+                            <th>Dates</th>
+                            <th>Status</th>
+                            <th>Guest</th>
+                            <th>Price</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($recentReservations as $r): ?>
+                            <tr>
+                                <td><?= htmlspecialchars('RSV-' . str_pad((string) ((int) ($r['id'] ?? 0)), 6, '0', STR_PAD_LEFT), ENT_QUOTES, 'UTF-8') ?></td>
+                                <td><?= htmlspecialchars((string) strtoupper((string) ($r['source'] ?? '')), ENT_QUOTES, 'UTF-8') ?></td>
+                                <td><?= htmlspecialchars((string) ($r['title'] ?? ''), ENT_QUOTES, 'UTF-8') ?></td>
+                                <td><?= htmlspecialchars((string) ($buildingNameByApartmentId[(string) ($r['apartment_id'] ?? '')] ?? ''), ENT_QUOTES, 'UTF-8') ?></td>
+                                <td><?= htmlspecialchars((string) ($apartmentNameById[(string) ($r['apartment_id'] ?? '')] ?? (string) ($r['apartment_id'] ?? '')), ENT_QUOTES, 'UTF-8') ?></td>
+                                <td><?= htmlspecialchars((string) ($r['start_date'] ?? ''), ENT_QUOTES, 'UTF-8') ?> → <?= htmlspecialchars((string) ($r['end_date'] ?? ''), ENT_QUOTES, 'UTF-8') ?></td>
+                                <td><?= htmlspecialchars((string) ($r['status'] ?? ''), ENT_QUOTES, 'UTF-8') ?></td>
+                                <td><?= htmlspecialchars(trim((string) (($r['customer_first_name'] ?? '') . ' ' . ($r['customer_last_name'] ?? ''))), ENT_QUOTES, 'UTF-8') ?></td>
+                                <td><?= htmlspecialchars((string) (($r['price_total'] ?? '') . ' ' . ($r['price_currency'] ?? '')), ENT_QUOTES, 'UTF-8') ?></td>
+                                <td>
+                                    <?php if ((string) ($r['source'] ?? '') === 'manual'): ?>
+                                        <details>
+                                            <summary class="btn ghost small">Manage</summary>
+                                            <form method="post" class="reservation-actions-grid">
+                                                <input type="hidden" name="intent" value="update_manual_reservation">
+                                                <input type="hidden" name="reservation_uuid" value="<?= htmlspecialchars((string) $r['reservation_uuid'], ENT_QUOTES, 'UTF-8') ?>">
+                                                <select name="apartment_id" required>
+                                                    <?php foreach ($apartments as $apartment): ?>
+                                                        <option value="<?= htmlspecialchars((string) $apartment['id'], ENT_QUOTES, 'UTF-8') ?>" <?= ((string) $apartment['id'] === (string) $r['apartment_id']) ? 'selected' : '' ?>><?= htmlspecialchars((string) ($apartment['building_name'] . ' - ' . $apartment['name']), ENT_QUOTES, 'UTF-8') ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                                <input type="text" name="title" value="<?= htmlspecialchars((string) $r['title'], ENT_QUOTES, 'UTF-8') ?>" placeholder="Title">
+                                                <select name="status">
+                                                    <?php foreach (['reserved', 'booked', 'checked_out', 'checkout_tomorrow', 'cancelled'] as $status): ?>
+                                                        <option value="<?= htmlspecialchars($status, ENT_QUOTES, 'UTF-8') ?>" <?= ((string) $r['status'] === $status) ? 'selected' : '' ?>><?= htmlspecialchars(ucwords(str_replace('_', ' ', $status)), ENT_QUOTES, 'UTF-8') ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                                <input type="date" name="start_date" value="<?= htmlspecialchars((string) $r['start_date'], ENT_QUOTES, 'UTF-8') ?>" required>
+                                                <input type="date" name="end_date" value="<?= htmlspecialchars((string) $r['end_date'], ENT_QUOTES, 'UTF-8') ?>" required>
+                                                <input type="text" name="customer_first_name" value="<?= htmlspecialchars((string) ($r['customer_first_name'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="First name">
+                                                <input type="text" name="customer_last_name" value="<?= htmlspecialchars((string) ($r['customer_last_name'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Last name">
+                                                <input type="email" name="customer_email" value="<?= htmlspecialchars((string) ($r['customer_email'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Email">
+                                                <input type="text" name="customer_phone" value="<?= htmlspecialchars((string) ($r['customer_phone'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Phone">
+                                                <input type="text" name="booking_channel" value="<?= htmlspecialchars((string) ($r['booking_channel'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Channel">
+                                                <input type="text" name="payment_status" value="<?= htmlspecialchars((string) ($r['payment_status'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Payment status">
+                                                <button class="btn" type="submit" onclick="return confirm('Confirm reservation update?')">Update</button>
+                                            </form>
+                                            <div class="reservation-inline-actions">
+                                                <form method="post"><input type="hidden" name="intent" value="cancel_manual_reservation"><input type="hidden" name="reservation_uuid" value="<?= htmlspecialchars((string) $r['reservation_uuid'], ENT_QUOTES, 'UTF-8') ?>"><button class="btn" type="submit" onclick="return confirm('Confirm cancellation of this reservation?')">Cancel</button></form>
+                                                <form method="post"><input type="hidden" name="intent" value="delete_manual_reservation"><input type="hidden" name="reservation_uuid" value="<?= htmlspecialchars((string) $r['reservation_uuid'], ENT_QUOTES, 'UTF-8') ?>"><button class="btn" type="submit" onclick="return confirm('Delete this reservation permanently?')">Delete</button></form>
+                                            </div>
+                                        </details>
+                                    <?php else: ?>
+                                        <span class="tiny">Read only (synced)</span>
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
             </div>
         <?php endif; ?>
     </section>

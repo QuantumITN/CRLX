@@ -36,7 +36,7 @@ h1,h2{margin:0 0 10px}
 h3,h4{margin:0 0 8px}
 
 .admin-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px}
-.admin-card{display:grid;gap:8px;background:var(--surface-soft);border:1px solid var(--border);border-radius:10px;padding:10px;min-width:0}
+.admin-card{display:grid;gap:8px;background:var(--surface-soft);border:1px solid var(--border);border-radius:10px;padding:10px;min-width:0;overflow:hidden}
 
 input,select,button,textarea{font:inherit;max-width:100%}
 input[type=text],input[type=url],input[type=number],input[type=password],input[type=email],input[type=date],select,textarea{
@@ -128,3 +128,13 @@ textarea{min-height:86px;resize:vertical}
   .top-nav .btn{padding:7px 9px;font-size:.82rem}
   .notif-menu{right:auto;left:0}
 }
+
+
+.admin-card .btn,.admin-card .btn.accent,.admin-card .btn.ghost{width:100%;max-width:100%}
+.admin-card input[type=file]{width:100%}
+.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:10px;background:#fff}
+.data-table{width:100%;border-collapse:collapse;min-width:980px}
+.data-table th,.data-table td{padding:8px;border-bottom:1px solid #e7eef7;vertical-align:top;text-align:left;font-size:.86rem}
+.data-table th{background:#f3f8fd;position:sticky;top:0;z-index:2}
+.inline-move-form{display:flex;gap:6px;align-items:center}
+.inline-move-form select{max-width:140px}

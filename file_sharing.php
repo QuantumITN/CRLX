@@ -89,6 +89,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
+
+    if ($intent === 'move_file') {
+        $rel = (string) ($_POST['file_rel'] ?? '');
+        $targetFolder = safeName((string) ($_POST['target_folder'] ?? ''));
+        if ($rel === '' || $targetFolder === '' || !is_dir(FS_BASE . '/' . $targetFolder)) {
+            $errors[] = 'Invalid move request.';
+        } else {
+            $src = FS_BASE . '/' . $rel;
+            $base = basename($rel);
+            $destRel = $targetFolder . '/' . $base;
+            $dest = FS_BASE . '/' . $destRel;
+            if (file_exists($src) && rename($src, $dest)) {
+                if (isset($meta[$rel])) {
+                    $meta[$destRel] = $meta[$rel];
+                    unset($meta[$rel]);
+                    writeMeta($meta);
+                }
+                $messages[] = 'File moved to folder: ' . $targetFolder;
+            } else {
+                $errors[] = 'Could not move file.';
+            }
+        }
+    }
+
     if ($intent === 'delete_file') {
         $rel = (string) ($_POST['file_rel'] ?? '');
         $file = FS_BASE . '/' . $rel;
@@ -197,6 +221,15 @@ if ($editRel !== '') {
 <div class="reservation-inline-actions">
 <a class="btn ghost" href="<?= htmlspecialchars('data/fileshare/' . $file['rel'], ENT_QUOTES, 'UTF-8') ?>" target="_blank" rel="noopener">View</a>
 <a class="btn ghost" href="?folder=<?= urlencode($selectedFolder) ?>&edit=<?= urlencode($file['rel']) ?>">Edit</a>
+<form method="post" class="inline-move-form">
+<input type="hidden" name="intent" value="move_file"><input type="hidden" name="file_rel" value="<?= htmlspecialchars($file['rel'], ENT_QUOTES, 'UTF-8') ?>">
+<select name="target_folder" required>
+<?php foreach ($folders as $folderOpt): if ($folderOpt === $selectedFolder) { continue; } ?>
+<option value="<?= htmlspecialchars($folderOpt, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($folderOpt, ENT_QUOTES, 'UTF-8') ?></option>
+<?php endforeach; ?>
+</select>
+<button class="btn ghost" type="submit">Move</button>
+</form>
 <form method="post" onsubmit="return confirm('Delete file?')">
 <input type="hidden" name="intent" value="delete_file"><input type="hidden" name="file_rel" value="<?= htmlspecialchars($file['rel'], ENT_QUOTES, 'UTF-8') ?>">
 <button class="btn" type="submit">Delete</button>
