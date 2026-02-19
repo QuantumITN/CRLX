@@ -210,6 +210,7 @@
     let startX = 0;
     let baseLeft = 0;
     let active = false;
+    let moved = false;
     let original = null;
 
     el.addEventListener('pointerdown', (ev) => {
@@ -221,6 +222,7 @@
       };
       startX = ev.clientX;
       baseLeft = parseFloat(el.style.left || '0');
+      moved = false;
       el.classList.add('dragging');
       el.setPointerCapture(ev.pointerId);
     });
@@ -228,6 +230,7 @@
     el.addEventListener('pointermove', (ev) => {
       if (!active) return;
       const dx = ev.clientX - startX;
+      if (Math.abs(dx) > 5) moved = true;
       el.style.left = `${Math.max(2, baseLeft + dx)}px`;
     });
 
@@ -235,6 +238,11 @@
       if (!active) return;
       active = false;
       el.classList.remove('dragging');
+
+      if (!moved) {
+        el.style.left = `${baseLeft}px`;
+        return;
+      }
 
       el.style.visibility = 'hidden';
       const dropTarget = document.elementFromPoint(ev.clientX, ev.clientY);
@@ -258,6 +266,16 @@
         end: fmt(clampDateToMonth(newEnd)),
         apartment_id: targetApartment,
       };
+
+      if (
+        next.apartment_id === original.apartment_id
+        && next.start === original.start
+        && next.end === original.end
+      ) {
+        updateReservationInArrays({ ...reservation, ...original });
+        placeReservations();
+        return;
+      }
 
       const targetLabel = apartmentMap.get(targetApartment) || targetApartment;
       if (!window.confirm(`Confirm moving this reservation to ${targetLabel}?`)) {
