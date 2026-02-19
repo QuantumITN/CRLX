@@ -13,6 +13,15 @@
   const monthStart = new Date(`${state.monthStart}T00:00:00Z`);
   const monthDays = Number(state.monthDays || 30);
   const openReservationId = String(state.openReservationId || '');
+  const collapsedBuildings = new Set((() => {
+    try {
+      const raw = window.localStorage.getItem('crlxCollapsedBuildings');
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch (_) {
+      return [];
+    }
+  })());
 
   const statusColors = state.statusColors || {
     booked: '#2dc26b',
@@ -76,6 +85,25 @@
     return Math.round((a.getTime() - b.getTime()) / 86400000);
   }
 
+  function saveCollapsedBuildings() {
+    try {
+      window.localStorage.setItem('crlxCollapsedBuildings', JSON.stringify([...collapsedBuildings]));
+    } catch (_) {
+      // ignore storage errors
+    }
+  }
+
+  function setBuildingCollapsed(buildingId, collapsed) {
+    document.querySelectorAll(`.apt-row[data-building-id="${CSS.escape(buildingId)}"]`).forEach((row) => {
+      row.classList.toggle('hidden-row', collapsed);
+    });
+    const toggle = document.querySelector(`.building-toggle[data-building-id="${CSS.escape(buildingId)}"]`);
+    if (toggle) {
+      toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      toggle.textContent = `${collapsed ? '▸' : '▾'} ${toggle.dataset.buildingName || ''}`;
+    }
+  }
+
   function buildBoard() {
     if (!scheduler) return;
 
@@ -110,12 +138,31 @@
     scroller.appendChild(header);
 
     grouped.forEach((rows, key) => {
-      const [, buildingName] = key.split('|');
+      const [buildingId, buildingName] = key.split('|');
       const g = document.createElement('div');
       g.className = 'grid-header group-row';
+      g.dataset.buildingId = buildingId;
       const c = document.createElement('div');
       c.className = 'cell title';
-      c.textContent = buildingName;
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'building-toggle';
+      toggle.dataset.buildingId = buildingId;
+      toggle.dataset.buildingName = buildingName;
+      const collapsed = collapsedBuildings.has(buildingId);
+      toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      toggle.textContent = `${collapsed ? '▸' : '▾'} ${buildingName}`;
+      toggle.addEventListener('click', () => {
+        const isCollapsed = collapsedBuildings.has(buildingId);
+        if (isCollapsed) {
+          collapsedBuildings.delete(buildingId);
+        } else {
+          collapsedBuildings.add(buildingId);
+        }
+        setBuildingCollapsed(buildingId, !isCollapsed);
+        saveCollapsedBuildings();
+      });
+      c.appendChild(toggle);
       g.appendChild(c);
       for (let i = 0; i < monthDays; i += 1) {
         const empty = document.createElement('div');
@@ -128,6 +175,8 @@
         const row = document.createElement('div');
         row.className = 'apt-row';
         row.dataset.apartmentId = apt.id;
+        row.dataset.buildingId = buildingId;
+        if (collapsedBuildings.has(buildingId)) row.classList.add('hidden-row');
 
         const label = document.createElement('div');
         label.className = 'apt-label';

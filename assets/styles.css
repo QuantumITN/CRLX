@@ -78,7 +78,10 @@ textarea{min-height:86px;resize:vertical}
 .cell{padding:8px;border-right:1px solid #e0ebf6;border-bottom:1px solid #e0ebf6;font-size:.82rem}
 .cell.title{font-weight:600}
 .group-row{background:#e9f3fe;color:#2c5f8c;font-weight:600}
+.building-toggle{display:inline-flex;align-items:center;gap:6px;background:transparent;border:none;color:inherit;font-weight:700;padding:0;cursor:pointer}
+.building-toggle:hover{text-decoration:underline}
 .apt-row{display:grid;grid-template-columns:220px repeat(var(--days),var(--dayw));height:var(--rowh);position:relative}
+.apt-row.hidden-row{display:none}
 .apt-label{padding:8px;border-right:1px solid #e0ebf6;border-bottom:1px solid #e0ebf6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .day-cell{border-right:1px solid #e0ebf6;border-bottom:1px solid #e0ebf6}
 .track{position:absolute;left:220px;right:0;top:0;bottom:0;pointer-events:none}
