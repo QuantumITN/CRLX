@@ -469,9 +469,10 @@ if ($filterBuilding !== '' && $filterApartment === '') {
                                                 <input type="text" name="booking_channel" value="<?= htmlspecialchars((string) ($r['booking_channel'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Channel">
                                                 <input type="text" name="payment_status" value="<?= htmlspecialchars((string) ($r['payment_status'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Payment status">
                                                 <button class="btn" type="submit" onclick="return confirm('Confirm reservation update?')">Update</button>
+                                                <button class="btn ghost" type="button" onclick="this.closest('details').open=false">Cancel</button>
                                             </form>
                                             <div class="reservation-inline-actions">
-                                                <form method="post"><input type="hidden" name="intent" value="cancel_manual_reservation"><input type="hidden" name="reservation_uuid" value="<?= htmlspecialchars((string) $r['reservation_uuid'], ENT_QUOTES, 'UTF-8') ?>"><button class="btn" type="submit" onclick="return confirm('Confirm cancellation of this reservation?')">Cancel</button></form>
+                                                <form method="post"><input type="hidden" name="intent" value="cancel_manual_reservation"><input type="hidden" name="reservation_uuid" value="<?= htmlspecialchars((string) $r['reservation_uuid'], ENT_QUOTES, 'UTF-8') ?>"><button class="btn" type="submit" onclick="return confirm('Confirm cancellation of this reservation?')">Cancel reservation</button></form>
                                                 <form method="post"><input type="hidden" name="intent" value="delete_manual_reservation"><input type="hidden" name="reservation_uuid" value="<?= htmlspecialchars((string) $r['reservation_uuid'], ENT_QUOTES, 'UTF-8') ?>"><button class="btn" type="submit" onclick="return confirm('Delete this reservation permanently?')">Delete</button></form>
                                             </div>
                                         </details>

@@ -529,7 +529,7 @@ $appData = [
     <div class="modal-dialog" role="dialog" aria-modal="true" aria-label="Reservation details">
         <div class="modal-head">
             <h3>Reservation summary</h3>
-            <button class="btn ghost small" type="button" id="modal-close">Close</button>
+            <button class="btn ghost small" type="button" id="modal-close">Cancel</button>
         </div>
         <form id="reservation-modal-form" class="modal-form">
             <div class="modal-grid">
