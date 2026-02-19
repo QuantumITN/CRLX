@@ -29,6 +29,7 @@
   const modalStatus = document.getElementById('modal-status');
   const modalStart = document.getElementById('modal-start');
   const modalEnd = document.getElementById('modal-end');
+  const modalBuilding = document.getElementById('modal-building');
   const modalApartment = document.getElementById('modal-apartment');
   const modalSource = document.getElementById('modal-source');
   const modalFirstName = document.getElementById('modal-first-name');
@@ -54,7 +55,7 @@
   const modalNote = document.getElementById('modal-note');
 
   const editableFields = [
-    modalTitle, modalStatus, modalStart, modalEnd, modalApartment,
+    modalTitle, modalStatus, modalStart, modalEnd, modalBuilding, modalApartment,
     modalFirstName, modalLastName, modalEmail, modalPhone, modalCountry, modalDocument,
     modalAdults, modalChildren, modalPriceTotal, modalCurrency, modalTax, modalCleaning,
     modalDiscount, modalPaymentStatus, modalPaymentMethod, modalBookingChannel, modalNotes,
@@ -234,7 +235,10 @@
       active = false;
       el.classList.remove('dragging');
 
-      const rowEl = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.apt-row') || el.closest('.apt-row');
+      el.style.visibility = 'hidden';
+      const dropTarget = document.elementFromPoint(ev.clientX, ev.clientY);
+      el.style.visibility = '';
+      const rowEl = dropTarget?.closest('.apt-row') || el.closest('.apt-row');
       const targetApartment = rowEl?.dataset.apartmentId || reservation.apartment_id;
 
       const newStartOffset = Math.round((parseFloat(el.style.left || '0') - 2) / DAY_WIDTH);
@@ -254,7 +258,8 @@
         apartment_id: targetApartment,
       };
 
-      if (!window.confirm('Confirm moving this reservation?')) {
+      const targetLabel = apartmentMap.get(targetApartment) || targetApartment;
+      if (!window.confirm(`Confirm moving this reservation to ${targetLabel}?`)) {
         updateReservationInArrays({ ...reservation, ...original });
         placeReservations();
         return;
@@ -281,6 +286,37 @@
     if (modalSave) modalSave.disabled = !editable;
     if (modalDelete) modalDelete.disabled = !editable;
     if (modalCancelStatus) modalCancelStatus.disabled = !editable;
+  }
+
+
+  function populateBuildingOptions(selectedBuildingId = '') {
+    if (!modalBuilding) return;
+    const unique = new Map();
+    apartments.forEach((apt) => {
+      if (!unique.has(apt.building_id)) unique.set(apt.building_id, apt.building_name);
+    });
+    modalBuilding.innerHTML = '';
+    unique.forEach((name, id) => {
+      const option = document.createElement('option');
+      option.value = id;
+      option.textContent = name;
+      if (id === selectedBuildingId) option.selected = true;
+      modalBuilding.appendChild(option);
+    });
+  }
+
+  function populateApartmentOptions(buildingId, selectedApartmentId = '') {
+    if (!modalApartment) return;
+    modalApartment.innerHTML = '';
+    apartments
+      .filter((apt) => apt.building_id === buildingId)
+      .forEach((apt) => {
+        const option = document.createElement('option');
+        option.value = apt.id;
+        option.textContent = `${apt.building_name} / ${apt.name}`;
+        if (apt.id === selectedApartmentId) option.selected = true;
+        modalApartment.appendChild(option);
+      });
   }
 
   function openModal(reservation) {
@@ -311,14 +347,10 @@
     modalBookingChannel.value = reservation.booking_channel || '';
     modalNotes.value = reservation.notes || '';
 
-    modalApartment.innerHTML = '';
-    apartments.forEach((apt) => {
-      const option = document.createElement('option');
-      option.value = apt.id;
-      option.textContent = `${apt.building_name} / ${apt.name}`;
-      if (apt.id === reservation.apartment_id) option.selected = true;
-      modalApartment.appendChild(option);
-    });
+    const selectedApartment = apartments.find((apt) => apt.id === reservation.apartment_id);
+    const selectedBuildingId = selectedApartment ? selectedApartment.building_id : (apartments[0]?.building_id || '');
+    populateBuildingOptions(selectedBuildingId);
+    populateApartmentOptions(selectedBuildingId, reservation.apartment_id);
 
     if (reservation.readonly) {
       setModalEditable(false);
@@ -422,6 +454,12 @@
         closeModal();
       }
     });
+
+    if (modalBuilding) {
+      modalBuilding.addEventListener('change', () => {
+        populateApartmentOptions(modalBuilding.value, '');
+      });
+    }
 
     if (modalClose) modalClose.addEventListener('click', closeModal);
     if (modalSave) modalSave.addEventListener('click', () => saveModalChanges(false));

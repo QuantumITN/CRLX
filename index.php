@@ -545,6 +545,9 @@ $appData = [
                 </label>
                 <label>Check-in <input type="date" id="modal-start"></label>
                 <label>Check-out <input type="date" id="modal-end"></label>
+                <label>Building
+                    <select id="modal-building"></select>
+                </label>
                 <label>Apartment
                     <select id="modal-apartment"></select>
                 </label>
