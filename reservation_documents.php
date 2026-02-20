@@ -1,6 +1,7 @@
 <?php
 
 const RESERVATION_DOCS_ROOT = __DIR__ . '/data/fileshare/Reservations documents';
+const RESERVATION_DOCS_STATE_FILE = __DIR__ . '/data/reservation_docs_state.json';
 const RESERVATION_DOCS_MAX_FILES = 5;
 const RESERVATION_DOC_ALLOWED_EXT = ['png', 'jpg', 'jpeg', 'jpn', 'pdf'];
 
@@ -30,6 +31,48 @@ function reservationDocUrl(string $reservationId, string $filename): string
     return 'data/fileshare/Reservations%20documents/' . rawurlencode($safeId) . '/' . rawurlencode($filename);
 }
 
+function readReservationDocState(): array
+{
+    if (!file_exists(RESERVATION_DOCS_STATE_FILE)) {
+        return [];
+    }
+
+    $raw = file_get_contents(RESERVATION_DOCS_STATE_FILE);
+    $json = is_string($raw) ? json_decode($raw, true) : null;
+
+    return is_array($json) ? $json : [];
+}
+
+function writeReservationDocState(array $state): void
+{
+    @file_put_contents(RESERVATION_DOCS_STATE_FILE, json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+}
+
+function activeDocNamesForReservation(string $reservationId): array
+{
+    $state = readReservationDocState();
+    $list = $state[$reservationId]['active'] ?? [];
+    if (!is_array($list)) {
+        return [];
+    }
+
+    return array_values(array_filter(array_map(static fn($v): string => (string) $v, $list), static fn(string $v): bool => $v !== ''));
+}
+
+function hasActiveDocState(string $reservationId): bool
+{
+    $state = readReservationDocState();
+
+    return array_key_exists($reservationId, $state);
+}
+
+function setActiveDocNamesForReservation(string $reservationId, array $active): void
+{
+    $state = readReservationDocState();
+    $state[$reservationId] = ['active' => array_values(array_unique(array_map(static fn($v): string => (string) $v, $active)))];
+    writeReservationDocState($state);
+}
+
 function listReservationDocuments(string $reservationId): array
 {
     $safeId = sanitizeReservationId($reservationId);
@@ -42,6 +85,9 @@ function listReservationDocuments(string $reservationId): array
         return [];
     }
 
+    $active = activeDocNamesForReservation($safeId);
+    $hasActiveState = hasActiveDocState($safeId);
+    $activeMap = array_fill_keys($active, true);
     $items = [];
     foreach (scandir($dir) ?: [] as $name) {
         if ($name === '.' || $name === '..') {
@@ -50,6 +96,10 @@ function listReservationDocuments(string $reservationId): array
 
         $full = $dir . '/' . $name;
         if (!is_file($full)) {
+            continue;
+        }
+
+        if ($hasActiveState && !isset($activeMap[$name])) {
             continue;
         }
 
@@ -165,6 +215,14 @@ function uploadReservationDocuments(string $reservationId, array $uploadInput, ?
         }
     }
 
+    if ($uploaded !== []) {
+        $active = activeDocNamesForReservation($safeId);
+        foreach ($uploaded as $doc) {
+            $active[] = (string) ($doc['name'] ?? '');
+        }
+        setActiveDocNamesForReservation($safeId, $active);
+    }
+
     return $uploaded;
 }
 
@@ -181,7 +239,21 @@ function deleteReservationDocument(string $reservationId, string $filename): boo
         return false;
     }
 
-    return unlink($path);
+    $active = activeDocNamesForReservation($safeId);
+    if ($active === []) {
+        $all = [];
+        foreach (scandir(reservationDocsDir($safeId)) ?: [] as $n) {
+            if ($n !== '.' && $n !== '..' && is_file(reservationDocsDir($safeId) . '/' . $n)) {
+                $all[] = $n;
+            }
+        }
+        $active = $all;
+    }
+
+    $next = array_values(array_filter($active, static fn(string $n): bool => $n !== $safeName));
+    setActiveDocNamesForReservation($safeId, $next);
+
+    return true;
 }
 
 function replaceReservationDocument(string $reservationId, string $filename, array $uploadInput, ?string &$error = null): array
@@ -236,7 +308,17 @@ function replaceReservationDocument(string $reservationId, string $filename, arr
         return [];
     }
 
-    @unlink($oldPath);
+    $active = activeDocNamesForReservation($safeId);
+    if ($active === []) {
+        foreach (scandir($dir) ?: [] as $n) {
+            if ($n !== '.' && $n !== '..' && is_file($dir . '/' . $n)) {
+                $active[] = $n;
+            }
+        }
+    }
+    $active = array_values(array_filter($active, static fn(string $n): bool => $n !== $safeName));
+    $active[] = $newName;
+    setActiveDocNamesForReservation($safeId, $active);
 
     return [
         'name' => $newName,

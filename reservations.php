@@ -545,7 +545,6 @@ if ($filterBuilding !== '' && $filterApartment === '') {
                                                                 <?php else: ?>
                                                                     <a class="doc-pdf" href="<?= htmlspecialchars((string) ($doc['url'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" target="_blank" rel="noopener">PDF</a>
                                                                 <?php endif; ?>
-                                                                <a class="tiny" href="<?= htmlspecialchars((string) ($doc['url'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" target="_blank" rel="noopener"><?= htmlspecialchars((string) ($doc['name'] ?? ''), ENT_QUOTES, 'UTF-8') ?></a>
                                                                 <form method="post" onsubmit="return confirm('Delete this document?')">
                                                                     <input type="hidden" name="intent" value="delete_reservation_document">
                                                                     <input type="hidden" name="reservation_uuid" value="<?= htmlspecialchars((string) $r['reservation_uuid'], ENT_QUOTES, 'UTF-8') ?>">

@@ -493,14 +493,6 @@
           card.appendChild(pdf);
         }
 
-        const label = document.createElement('a');
-        label.href = doc.url;
-        label.target = '_blank';
-        label.rel = 'noopener';
-        label.className = 'tiny';
-        label.textContent = doc.name || 'Document';
-        card.appendChild(label);
-
         if (!readonly) {
           const actions = document.createElement('div');
           actions.className = 'doc-card-actions';
