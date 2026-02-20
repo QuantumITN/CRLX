@@ -17,7 +17,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (verifyAdminCredentials($user, $pass)) {
         $_SESSION['auth_user'] = getAdminUsername();
-        header('Location: ' . $redirect);
+        if (!headers_sent()) {
+            header('Location: ' . $redirect);
+            exit;
+        }
+        echo '<script>window.location.href=' . json_encode($redirect) . ';</script>';
+        echo '<noscript><meta http-equiv="refresh" content="0;url=' . htmlspecialchars($redirect, ENT_QUOTES, 'UTF-8') . '"></noscript>';
         exit;
     }
 
