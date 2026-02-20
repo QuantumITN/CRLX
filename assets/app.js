@@ -236,7 +236,13 @@
       bar.style.width = `${len * DAY_WIDTH - 4}px`;
       bar.style.background = statusColors[r.status] || '#64748b';
       bar.textContent = `${(r.title || r.status || 'reservation').toUpperCase()} (${r.start} → ${r.end})`;
-      bar.addEventListener('click', () => openModal(r));
+      bar.addEventListener('click', () => {
+        if (bar.dataset.dragJustEnded === '1') {
+          bar.dataset.dragJustEnded = '0';
+          return;
+        }
+        openModal(r);
+      });
       track.appendChild(bar);
 
       if (!r.readonly) enableDrag(bar, r);
@@ -302,6 +308,8 @@
         el.style.left = `${baseLeft}px`;
         return;
       }
+
+      el.dataset.dragJustEnded = '1';
 
       el.style.visibility = 'hidden';
       const dropTarget = document.elementFromPoint(ev.clientX, ev.clientY);
@@ -612,7 +620,15 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      return await res.json();
+      const text = await res.text();
+      try {
+        return JSON.parse(text);
+      } catch (_) {
+        return {
+          ok: false,
+          message: `Unexpected server response (${res.status}). Please reload and try again.`,
+        };
+      }
     } catch (_) {
       return { ok: false, message: 'Network error' };
     }
