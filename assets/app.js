@@ -67,6 +67,12 @@
   const modalDocList = document.getElementById('modal-doc-list');
   const modalDocDropzone = document.getElementById('modal-doc-dropzone');
   const reservationDocuments = state.reservationDocuments || {};
+  const modalDocReplaceInput = document.createElement('input');
+  modalDocReplaceInput.type = 'file';
+  modalDocReplaceInput.accept = '.png,.jpg,.jpeg,.jpn,.pdf';
+  modalDocReplaceInput.style.display = 'none';
+  document.body.appendChild(modalDocReplaceInput);
+  let pendingReplaceDoc = null;
 
   const editableFields = [
     modalTitle, modalStatus, modalStart, modalEnd, modalBuilding, modalApartment,
@@ -496,12 +502,27 @@
         card.appendChild(label);
 
         if (!readonly) {
+          const actions = document.createElement('div');
+          actions.className = 'doc-card-actions';
+
           const del = document.createElement('button');
           del.type = 'button';
-          del.className = 'btn small';
-          del.textContent = 'Delete document';
+          del.className = 'btn small doc-action-btn';
+          del.textContent = 'Delete';
           del.addEventListener('click', () => deleteDocument(reservationId, doc.name));
-          card.appendChild(del);
+
+          const replace = document.createElement('button');
+          replace.type = 'button';
+          replace.className = 'btn ghost small doc-action-btn';
+          replace.textContent = 'Replace';
+          replace.addEventListener('click', () => {
+            pendingReplaceDoc = { reservationId, filename: doc.name };
+            modalDocReplaceInput.click();
+          });
+
+          actions.appendChild(del);
+          actions.appendChild(replace);
+          card.appendChild(actions);
         }
 
         modalDocList.appendChild(card);
@@ -566,6 +587,29 @@
       renderDocList(reservationId, false);
     } else {
       modalNote.textContent = data?.message || 'Could not delete document.';
+    }
+  }
+
+  async function replaceDocument(reservationId, filename, file) {
+    const form = new FormData();
+    form.append('reservation_id', reservationId);
+    form.append('filename', filename);
+    form.append('replacement', file);
+
+    try {
+      const res = await fetch('?action=api_replace_reservation_doc', {
+        method: 'POST',
+        body: form,
+      });
+      const data = await res.json();
+      if (data?.ok) {
+        reservationDocuments[reservationId] = Array.isArray(data.documents) ? data.documents : [];
+        renderDocList(reservationId, false);
+      } else {
+        modalNote.textContent = data?.message || 'Could not replace document.';
+      }
+    } catch (_) {
+      modalNote.textContent = 'Replace failed due to network error.';
     }
   }
 
@@ -666,6 +710,17 @@
         modalDocUpload.value = '';
       });
     }
+
+    modalDocReplaceInput.addEventListener('change', async (ev) => {
+      const file = ev.target?.files?.[0];
+      if (!file || !pendingReplaceDoc) {
+        modalDocReplaceInput.value = '';
+        return;
+      }
+      await replaceDocument(pendingReplaceDoc.reservationId, pendingReplaceDoc.filename, file);
+      pendingReplaceDoc = null;
+      modalDocReplaceInput.value = '';
+    });
 
     if (modalClose) modalClose.addEventListener('click', closeModal);
     if (modalSave) modalSave.addEventListener('click', () => saveModalChanges(false));

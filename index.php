@@ -491,6 +491,27 @@ if ($action === 'api_delete_reservation_doc' && $_SERVER['REQUEST_METHOD'] === '
     exit;
 }
 
+if ($action === 'api_replace_reservation_doc' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    header('Content-Type: application/json; charset=utf-8');
+    $reservationId = trim((string) ($_POST['reservation_id'] ?? ''));
+    $filename = trim((string) ($_POST['filename'] ?? ''));
+    $upload = $_FILES['replacement'] ?? null;
+
+    if ($reservationId === '' || $filename === '' || !is_array($upload)) {
+        echo json_encode(['ok' => false, 'message' => 'Reservation, document and replacement file are required.']);
+        exit;
+    }
+
+    $error = null;
+    $replaced = replaceReservationDocument($reservationId, $filename, $upload, $error);
+    echo json_encode([
+        'ok' => $replaced !== [],
+        'message' => $replaced !== [] ? 'Document replaced.' : ($error ?? 'Could not replace document.'),
+        'documents' => listReservationDocuments($reservationId),
+    ]);
+    exit;
+}
+
 $interval = (int) ($settings['sync_interval_minutes'] ?? 30);
 $lastSyncTs = isset($syncMeta['last_sync']) ? strtotime((string) $syncMeta['last_sync']) : false;
 if ($lastSyncTs === false || (time() - $lastSyncTs) >= ($interval * 60)) {

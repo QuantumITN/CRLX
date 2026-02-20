@@ -184,6 +184,68 @@ function deleteReservationDocument(string $reservationId, string $filename): boo
     return unlink($path);
 }
 
+function replaceReservationDocument(string $reservationId, string $filename, array $uploadInput, ?string &$error = null): array
+{
+    $safeId = sanitizeReservationId($reservationId);
+    $safeName = basename($filename);
+    if ($safeId === '' || $safeName === '' || $safeName !== $filename) {
+        $error = 'Invalid reservation or document.';
+
+        return [];
+    }
+
+    $files = normalizeUploadSet($uploadInput);
+    $valid = array_values(array_filter($files, static fn(array $f): bool => (($f['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_OK)));
+    if ($valid === []) {
+        $error = 'Select a replacement file.';
+
+        return [];
+    }
+
+    $first = $valid[0];
+    $original = safeUploadName((string) ($first['name'] ?? 'document'));
+    $ext = strtolower(pathinfo($original, PATHINFO_EXTENSION));
+    if (!in_array($ext, RESERVATION_DOC_ALLOWED_EXT, true)) {
+        $error = 'Only PNG, JPG/JPEG, or PDF files are allowed.';
+
+        return [];
+    }
+
+    $dir = reservationDocsDir($safeId);
+    if (!is_dir($dir)) {
+        mkdir($dir, 0775, true);
+    }
+
+    $oldPath = $dir . '/' . $safeName;
+    if (!is_file($oldPath)) {
+        $error = 'Document to replace was not found.';
+
+        return [];
+    }
+
+    $base = pathinfo($original, PATHINFO_FILENAME);
+    if ($base === '') {
+        $base = 'document';
+    }
+    $newName = $base . '_' . gmdate('Ymd_His') . '_' . bin2hex(random_bytes(2)) . '.' . $ext;
+    $newPath = $dir . '/' . $newName;
+
+    if (!move_uploaded_file((string) ($first['tmp_name'] ?? ''), $newPath)) {
+        $error = 'Could not upload replacement file.';
+
+        return [];
+    }
+
+    @unlink($oldPath);
+
+    return [
+        'name' => $newName,
+        'ext' => $ext,
+        'size' => filesize($newPath) ?: 0,
+        'url' => reservationDocUrl($safeId, $newName),
+    ];
+}
+
 function reservationDocumentsByIds(array $reservationIds): array
 {
     $result = [];

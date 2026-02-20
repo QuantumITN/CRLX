@@ -344,6 +344,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = 'Could not delete reservation document.';
         }
     }
+
+    if ($intent === 'replace_reservation_document') {
+        $reservationId = trim((string) ($_POST['reservation_uuid'] ?? ''));
+        $filename = trim((string) ($_POST['document_name'] ?? ''));
+        $upload = $_FILES['replacement_document'] ?? null;
+        if ($reservationId === '' || $filename === '' || !is_array($upload)) {
+            $errors[] = 'Reservation, document and replacement file are required.';
+        } else {
+            $error = null;
+            $replaced = replaceReservationDocument($reservationId, $filename, $upload, $error);
+            if ($replaced !== []) {
+                $messages[] = 'Reservation document replaced.';
+            } else {
+                $errors[] = $error ?? 'Could not replace document.';
+            }
+        }
+    }
 }
 
 $filterFrom = trim((string) ($_GET['from_date'] ?? ''));
@@ -534,6 +551,13 @@ if ($filterBuilding !== '' && $filterApartment === '') {
                                                                     <input type="hidden" name="reservation_uuid" value="<?= htmlspecialchars((string) $r['reservation_uuid'], ENT_QUOTES, 'UTF-8') ?>">
                                                                     <input type="hidden" name="document_name" value="<?= htmlspecialchars((string) ($doc['name'] ?? ''), ENT_QUOTES, 'UTF-8') ?>">
                                                                     <button class="btn small" type="submit">Delete document</button>
+                                                                </form>
+                                                                <form method="post" enctype="multipart/form-data" class="doc-replace-form">
+                                                                    <input type="hidden" name="intent" value="replace_reservation_document">
+                                                                    <input type="hidden" name="reservation_uuid" value="<?= htmlspecialchars((string) $r['reservation_uuid'], ENT_QUOTES, 'UTF-8') ?>">
+                                                                    <input type="hidden" name="document_name" value="<?= htmlspecialchars((string) ($doc['name'] ?? ''), ENT_QUOTES, 'UTF-8') ?>">
+                                                                    <input type="file" name="replacement_document" accept=".png,.jpg,.jpeg,.jpn,.pdf" required>
+                                                                    <button class="btn ghost small" type="submit">Replace document</button>
                                                                 </form>
                                                             </div>
                                                         <?php endforeach; ?>
