@@ -621,14 +621,31 @@
         body: JSON.stringify(payload),
       });
       const text = await res.text();
-      try {
-        return JSON.parse(text);
-      } catch (_) {
-        return {
-          ok: false,
-          message: `Unexpected server response (${res.status}). Please reload and try again.`,
-        };
+      const direct = (() => {
+        try {
+          return JSON.parse(text);
+        } catch (_) {
+          return null;
+        }
+      })();
+      if (direct && typeof direct === 'object') return direct;
+
+      const firstBrace = text.indexOf('{');
+      const lastBrace = text.lastIndexOf('}');
+      if (firstBrace >= 0 && lastBrace > firstBrace) {
+        const candidate = text.slice(firstBrace, lastBrace + 1);
+        try {
+          const recovered = JSON.parse(candidate);
+          if (recovered && typeof recovered === 'object') return recovered;
+        } catch (_) {
+          // keep fallback message below
+        }
       }
+
+      return {
+        ok: false,
+        message: `Unexpected server response (${res.status}). Please reload and try again.`,
+      };
     } catch (_) {
       return { ok: false, message: 'Network error' };
     }
