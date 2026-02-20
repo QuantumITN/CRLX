@@ -3,7 +3,13 @@
 declare(strict_types=1);
 
 if (session_status() !== PHP_SESSION_ACTIVE) {
-    session_start();
+    if (!headers_sent()) {
+        session_start();
+    } else {
+        if (!isset($_SESSION) || !is_array($_SESSION)) {
+            $_SESSION = [];
+        }
+    }
 }
 
 const APP_ADMIN_USER = 'admin';
@@ -117,6 +123,13 @@ function requireAuth(): void
     }
 
     $redirect = urlencode($_SERVER['REQUEST_URI'] ?? '/index.php');
-    header('Location: login.php?redirect=' . $redirect);
+    if (!headers_sent()) {
+        header('Location: login.php?redirect=' . $redirect);
+        exit;
+    }
+
+    $target = 'login.php?redirect=' . $redirect;
+    echo '<script>window.location.href=' . json_encode($target) . ';</script>';
+    echo '<noscript><meta http-equiv="refresh" content="0;url=' . htmlspecialchars($target, ENT_QUOTES, 'UTF-8') . '"></noscript>';
     exit;
 }
