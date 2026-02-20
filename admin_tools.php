@@ -691,238 +691,255 @@ foreach ($buildings as $building) {
         <?php foreach ($messages as $message): ?><div class="flash success"><?= htmlspecialchars($message, ENT_QUOTES, 'UTF-8') ?></div><?php endforeach; ?>
 
         <h2>Admin Tools</h2>
-        <details class="accordion-group" open><summary>Portfolio + sync controls</summary><p class="tiny">Expand/collapse sections to keep the page cleaner on mobile.</p></details>
-        <div class="admin-grid">
-            <form method="post" class="admin-card">
-                <h3>Add building</h3>
-                <input type="hidden" name="intent" value="add_building">
-                <input type="text" name="building_name" placeholder="e.g. Sunset Tower" required>
-                <button class="btn" type="submit">Add building</button>
-            </form>
+        <p class="tiny">Use expand/collapse categories to keep tools organized.</p>
 
-            <form method="post" class="admin-card">
-                <h3>Edit building name</h3>
-                <input type="hidden" name="intent" value="edit_building">
-                <select name="building_id" required>
-                    <option value="">Select building</option>
-                    <?php foreach ($buildings as $building): ?>
-                        <option value="<?= htmlspecialchars((string) $building['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $building['name'], ENT_QUOTES, 'UTF-8') ?></option>
-                    <?php endforeach; ?>
-                </select>
-                <input type="text" name="building_name" placeholder="New building name" required>
-                <button class="btn" type="submit">Save building</button>
-            </form>
+        <details class="accordion-group" open>
+            <summary>Buildings, apartments & feed mapping</summary>
+            <div class="admin-grid">
+                <form method="post" class="admin-card">
+                    <h3>Add building</h3>
+                    <input type="hidden" name="intent" value="add_building">
+                    <input type="text" name="building_name" placeholder="e.g. Sunset Tower" required>
+                    <button class="btn" type="submit">Add building</button>
+                </form>
 
-            <form method="post" class="admin-card">
-                <h3>Delete building</h3>
-                <input type="hidden" name="intent" value="delete_building">
-                <select name="building_id" required>
-                    <option value="">Select building</option>
-                    <?php foreach ($buildings as $building): ?>
-                        <option value="<?= htmlspecialchars((string) $building['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $building['name'], ENT_QUOTES, 'UTF-8') ?></option>
-                    <?php endforeach; ?>
-                </select>
-                <p class="tiny">Deletes the building and all apartments under it.</p>
-                <button class="btn" type="submit">Delete building</button>
-            </form>
-
-            <form method="post" class="admin-card">
-                <h3>Add apartment</h3>
-                <input type="hidden" name="intent" value="add_apartment">
-                <select name="building_id" required>
-                    <option value="">Select building</option>
-                    <?php foreach ($buildings as $building): ?>
-                        <option value="<?= htmlspecialchars((string) $building['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $building['name'], ENT_QUOTES, 'UTF-8') ?></option>
-                    <?php endforeach; ?>
-                </select>
-                <input type="text" name="apartment_name" placeholder="e.g. Apt 302" required>
-                <button class="btn" type="submit">Add apartment</button>
-            </form>
-
-            <form method="post" class="admin-card">
-                <h3>Edit / reassign apartment</h3>
-                <input type="hidden" name="intent" value="edit_apartment">
-                <select name="apartment_id" required>
-                    <option value="">Select apartment</option>
-                    <?php foreach ($apartments as $apartment): ?>
-                        <option value="<?= htmlspecialchars((string) $apartment['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($apartment['building_name'] . ' / ' . $apartment['name'], ENT_QUOTES, 'UTF-8') ?></option>
-                    <?php endforeach; ?>
-                </select>
-                <select name="target_building_id" required>
-                    <option value="">Target building</option>
-                    <?php foreach ($buildings as $building): ?>
-                        <option value="<?= htmlspecialchars((string) $building['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $building['name'], ENT_QUOTES, 'UTF-8') ?></option>
-                    <?php endforeach; ?>
-                </select>
-                <input type="text" name="apartment_name" placeholder="New apartment name" required>
-                <button class="btn" type="submit">Save apartment</button>
-            </form>
-
-            <form method="post" class="admin-card">
-                <h3>Delete apartment</h3>
-                <input type="hidden" name="intent" value="delete_apartment">
-                <select name="apartment_id" required>
-                    <option value="">Select apartment</option>
-                    <?php foreach ($apartments as $apartment): ?>
-                        <option value="<?= htmlspecialchars((string) $apartment['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($apartment['building_name'] . ' / ' . $apartment['name'], ENT_QUOTES, 'UTF-8') ?></option>
-                    <?php endforeach; ?>
-                </select>
-                <button class="btn" type="submit">Delete apartment</button>
-            </form>
-
-            <form method="post" class="admin-card">
-                <h3>Sync settings</h3>
-                <input type="hidden" name="intent" value="save_settings">
-                <label>Auto-sync every <input type="number" min="1" max="1440" name="sync_interval_minutes" value="<?= (int) $settings['sync_interval_minutes'] ?>"> minute(s)</label>
-                <button class="btn" type="submit">Save interval</button>
-                <p class="tiny">Last sync: <?= htmlspecialchars((string) ($syncMeta['last_sync'] ?? 'Never'), ENT_QUOTES, 'UTF-8') ?></p>
-            </form>
-
-            <form method="post" class="admin-card" id="sync-scope-form">
-                <h3>Sync now</h3>
-                <input type="hidden" name="intent" value="sync_now">
-                <select name="sync_scope" id="sync_scope" required>
-                    <option value="all">All buildings + apartments</option>
-                    <option value="building">One building</option>
-                    <option value="apartment">One apartment</option>
-                </select>
-                <select name="sync_building_id" id="sync_building_id">
-                    <option value="">Select building</option>
-                    <?php foreach ($buildings as $building): ?>
-                        <option value="<?= htmlspecialchars((string) $building['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $building['name'], ENT_QUOTES, 'UTF-8') ?></option>
-                    <?php endforeach; ?>
-                </select>
-                <select name="sync_apartment_id" id="sync_apartment_id">
-                    <option value="">Select apartment</option>
-                    <?php foreach ($apartments as $apartment): ?>
-                        <option value="<?= htmlspecialchars((string) $apartment['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($apartment['building_name'] . ' / ' . $apartment['name'], ENT_QUOTES, 'UTF-8') ?></option>
-                    <?php endforeach; ?>
-                </select>
-                <button class="btn accent" type="submit">Sync now</button>
-            </form>
-
-            <form method="post" class="admin-card">
-                <h3>Database configuration</h3>
-                <input type="hidden" name="intent" value="save_db_config">
-                <input type="text" name="db_host" value="<?= htmlspecialchars((string) ($dbConfig['host'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB host" required>
-                <input type="number" name="db_port" value="<?= (int) ($dbConfig['port'] ?? 3306) ?>" placeholder="DB port" required>
-                <input type="text" name="db_name" value="<?= htmlspecialchars((string) ($dbConfig['name'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB name" required>
-                <input type="text" name="db_user" value="<?= htmlspecialchars((string) ($dbConfig['user'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB user" required>
-                <input type="password" name="db_pass" value="<?= htmlspecialchars((string) ($dbConfig['pass'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB password">
-                <input type="text" name="db_charset" value="<?= htmlspecialchars((string) ($dbConfig['charset'] ?? 'utf8mb4'), ENT_QUOTES, 'UTF-8') ?>" placeholder="utf8mb4" required>
-                <div class="reservation-inline-actions">
-                    <button class="btn" type="submit">Save DB config</button>
-                </div>
-            </form>
-
-            <form method="post" class="admin-card">
-                <h3>Test DB connection</h3>
-                <input type="hidden" name="intent" value="test_db_config">
-                <input type="text" name="db_host" value="<?= htmlspecialchars((string) ($dbConfig['host'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB host" required>
-                <input type="number" name="db_port" value="<?= (int) ($dbConfig['port'] ?? 3306) ?>" placeholder="DB port" required>
-                <input type="text" name="db_name" value="<?= htmlspecialchars((string) ($dbConfig['name'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB name" required>
-                <input type="text" name="db_user" value="<?= htmlspecialchars((string) ($dbConfig['user'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB user" required>
-                <input type="password" name="db_pass" value="<?= htmlspecialchars((string) ($dbConfig['pass'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB password">
-                <input type="text" name="db_charset" value="<?= htmlspecialchars((string) ($dbConfig['charset'] ?? 'utf8mb4'), ENT_QUOTES, 'UTF-8') ?>" placeholder="utf8mb4" required>
-                <button class="btn accent" type="submit">Test connection</button>
-            </form>
-
-
-            
-            <form method="post" class="admin-card">
-                <h3>Notification settings</h3>
-                <input type="hidden" name="intent" value="save_notification_settings">
-                <label><input type="checkbox" name="reservation_made" <?= !empty($notifSettings['reservation_made']) ? 'checked' : '' ?>> Reservation made (manual or synced)</label>
-                <label><input type="checkbox" name="checkout_tomorrow" <?= !empty($notifSettings['checkout_tomorrow']) ? 'checked' : '' ?>> Tomorrow checkouts</label>
-                <label><input type="checkbox" name="sync_failed" <?= !empty($notifSettings['sync_failed']) ? 'checked' : '' ?>> Sync/update unsuccessful</label>
-                <button class="btn" type="submit">Save notifications</button>
-            </form>
-
-            <article class="admin-card">
-                <h3>File sharing service</h3>
-                <p>Folders, uploads, and file editing/deletion.</p>
-                <a class="btn accent" href="file_sharing.php">Open File sharing</a>
-            </article>
-
-            <article class="admin-card">
-                <h3>Reports</h3>
-                <p>Generate reservation charts by dates and scope.</p>
-                <a class="btn accent" href="reports.php">Open Reports</a>
-            </article>
-
-            <form method="post" class="admin-card">
-                <h3>Change admin password</h3>
-                <input type="hidden" name="intent" value="change_password">
-                <input type="password" name="current_password" placeholder="Current password" required>
-                <input type="password" name="new_password" placeholder="New password" required>
-                <input type="password" name="confirm_password" placeholder="Confirm new password" required>
-                <button class="btn" type="submit">Update password</button>
-            </form>
-
-            <form method="post" enctype="multipart/form-data" class="admin-card">
-                <h3>Upload header logo</h3>
-                <input type="hidden" name="intent" value="upload_logo">
-                <input type="file" name="logo_file" accept=".png,.jpg,.jpeg,.webp,.svg" required>
-                <button class="btn" type="submit">Upload logo</button>
-            </form>
-
-            <article class="admin-card">
-                <h3>Make reservation</h3>
-                <p>Create manual reservations and view reservation history on dedicated page.</p>
-                <a class="btn accent" href="reservations.php" target="_blank" rel="noopener">Make Reservation</a>
-            </article>
-
-            <article class="admin-card">
-                <h3>Server health check</h3>
-                <p>Verify PHP, MySQL, and writable paths.</p>
-                <a class="btn" href="healthcheck.php" target="_blank" rel="noopener">Open Health Check</a>
-            </article>
-        </div>
-
-        <?php if (!empty($syncMeta['status']) && is_array($syncMeta['status'])): ?>
-            <ul class="status-list">
-                <?php foreach ($syncMeta['status'] as $feed => $text): ?>
-                    <li><strong><?= htmlspecialchars((string) $feed, ENT_QUOTES, 'UTF-8') ?>:</strong> <?= htmlspecialchars((string) $text, ENT_QUOTES, 'UTF-8') ?></li>
-                <?php endforeach; ?>
-            </ul>
-        <?php endif; ?>
-    </section>
-
-    <section class="panel">
-        <h2>Apartment feed mapping</h2>
-        <form method="post" id="feed-mapping-form" class="feed-mapping-form">
-            <input type="hidden" name="intent" value="save_feeds">
-            <div class="feed-grid compact-grid">
-                <div>
-                    <label for="feed_building_id">Building</label>
-                    <select name="feed_building_id" id="feed_building_id" required>
+                <form method="post" class="admin-card">
+                    <h3>Edit building name</h3>
+                    <input type="hidden" name="intent" value="edit_building">
+                    <select name="building_id" required>
                         <option value="">Select building</option>
                         <?php foreach ($buildings as $building): ?>
                             <option value="<?= htmlspecialchars((string) $building['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $building['name'], ENT_QUOTES, 'UTF-8') ?></option>
                         <?php endforeach; ?>
                     </select>
-                </div>
-                <div>
-                    <label for="feed_apartment_id">Apartment</label>
-                    <select name="feed_apartment_id" id="feed_apartment_id" required>
-                        <option value="">Select apartment</option>
+                    <input type="text" name="building_name" placeholder="New building name" required>
+                    <button class="btn" type="submit">Save building</button>
+                </form>
+
+                <form method="post" class="admin-card">
+                    <h3>Delete building</h3>
+                    <input type="hidden" name="intent" value="delete_building">
+                    <select name="building_id" required>
+                        <option value="">Select building</option>
+                        <?php foreach ($buildings as $building): ?>
+                            <option value="<?= htmlspecialchars((string) $building['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $building['name'], ENT_QUOTES, 'UTF-8') ?></option>
+                        <?php endforeach; ?>
                     </select>
-                </div>
+                    <p class="tiny">Deletes the building and all apartments under it.</p>
+                    <button class="btn" type="submit">Delete building</button>
+                </form>
+
+                <form method="post" class="admin-card">
+                    <h3>Add apartment</h3>
+                    <input type="hidden" name="intent" value="add_apartment">
+                    <select name="building_id" required>
+                        <option value="">Select building</option>
+                        <?php foreach ($buildings as $building): ?>
+                            <option value="<?= htmlspecialchars((string) $building['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $building['name'], ENT_QUOTES, 'UTF-8') ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <input type="text" name="apartment_name" placeholder="e.g. Apt 302" required>
+                    <button class="btn" type="submit">Add apartment</button>
+                </form>
+
+                <form method="post" class="admin-card">
+                    <h3>Edit / reassign apartment</h3>
+                    <input type="hidden" name="intent" value="edit_apartment">
+                    <select name="apartment_id" required>
+                        <option value="">Select apartment</option>
+                        <?php foreach ($apartments as $apartment): ?>
+                            <option value="<?= htmlspecialchars((string) $apartment['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($apartment['building_name'] . ' / ' . $apartment['name'], ENT_QUOTES, 'UTF-8') ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <select name="target_building_id" required>
+                        <option value="">Target building</option>
+                        <?php foreach ($buildings as $building): ?>
+                            <option value="<?= htmlspecialchars((string) $building['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $building['name'], ENT_QUOTES, 'UTF-8') ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <input type="text" name="apartment_name" placeholder="New apartment name" required>
+                    <button class="btn" type="submit">Save apartment</button>
+                </form>
+
+                <form method="post" class="admin-card">
+                    <h3>Delete apartment</h3>
+                    <input type="hidden" name="intent" value="delete_apartment">
+                    <select name="apartment_id" required>
+                        <option value="">Select apartment</option>
+                        <?php foreach ($apartments as $apartment): ?>
+                            <option value="<?= htmlspecialchars((string) $apartment['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($apartment['building_name'] . ' / ' . $apartment['name'], ENT_QUOTES, 'UTF-8') ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <button class="btn" type="submit">Delete apartment</button>
+                </form>
             </div>
-            <div class="feed-grid compact-grid">
-                <div>
-                    <label for="feed_airbnb_url">Airbnb iCal URL</label>
-                    <input type="url" name="feed_airbnb_url" id="feed_airbnb_url" placeholder="https://...">
+
+            <h3>Apartment feed mapping</h3>
+            <form method="post" id="feed-mapping-form" class="feed-mapping-form">
+                <input type="hidden" name="intent" value="save_feeds">
+                <div class="feed-grid compact-grid">
+                    <div>
+                        <label for="feed_building_id">Building</label>
+                        <select name="feed_building_id" id="feed_building_id" required>
+                            <option value="">Select building</option>
+                            <?php foreach ($buildings as $building): ?>
+                                <option value="<?= htmlspecialchars((string) $building['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $building['name'], ENT_QUOTES, 'UTF-8') ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="feed_apartment_id">Apartment</label>
+                        <select name="feed_apartment_id" id="feed_apartment_id" required>
+                            <option value="">Select apartment</option>
+                        </select>
+                    </div>
                 </div>
-                <div>
-                    <label for="feed_booking_url">Booking.com iCal URL</label>
-                    <input type="url" name="feed_booking_url" id="feed_booking_url" placeholder="https://...">
+                <div class="feed-grid compact-grid">
+                    <div>
+                        <label for="feed_airbnb_url">Airbnb iCal URL</label>
+                        <input type="url" name="feed_airbnb_url" id="feed_airbnb_url" placeholder="https://...">
+                    </div>
+                    <div>
+                        <label for="feed_booking_url">Booking.com iCal URL</label>
+                        <input type="url" name="feed_booking_url" id="feed_booking_url" placeholder="https://...">
+                    </div>
                 </div>
+                <button class="btn" type="submit">Save feed URLs</button>
+            </form>
+            <p class="tiny">Use dropdowns to manage one apartment mapping at a time (cleaner for large portfolios).</p>
+        </details>
+
+        <details class="accordion-group" open>
+            <summary>Sync operations</summary>
+            <div class="admin-grid">
+                <form method="post" class="admin-card">
+                    <h3>Sync settings</h3>
+                    <input type="hidden" name="intent" value="save_settings">
+                    <label>Auto-sync every <input type="number" min="1" max="1440" name="sync_interval_minutes" value="<?= (int) $settings['sync_interval_minutes'] ?>"> minute(s)</label>
+                    <button class="btn" type="submit">Save interval</button>
+                    <p class="tiny">Last sync: <?= htmlspecialchars((string) ($syncMeta['last_sync'] ?? 'Never'), ENT_QUOTES, 'UTF-8') ?></p>
+                </form>
+
+                <form method="post" class="admin-card" id="sync-scope-form">
+                    <h3>Sync now</h3>
+                    <input type="hidden" name="intent" value="sync_now">
+                    <select name="sync_scope" id="sync_scope" required>
+                        <option value="all">All buildings + apartments</option>
+                        <option value="building">One building</option>
+                        <option value="apartment">One apartment</option>
+                    </select>
+                    <select name="sync_building_id" id="sync_building_id">
+                        <option value="">Select building</option>
+                        <?php foreach ($buildings as $building): ?>
+                            <option value="<?= htmlspecialchars((string) $building['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $building['name'], ENT_QUOTES, 'UTF-8') ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <select name="sync_apartment_id" id="sync_apartment_id">
+                        <option value="">Select apartment</option>
+                        <?php foreach ($apartments as $apartment): ?>
+                            <option value="<?= htmlspecialchars((string) $apartment['id'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($apartment['building_name'] . ' / ' . $apartment['name'], ENT_QUOTES, 'UTF-8') ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <button class="btn accent" type="submit">Sync now</button>
+                </form>
             </div>
-            <button class="btn" type="submit">Save feed URLs</button>
-        </form>
-        <p class="tiny">Use dropdowns to manage one apartment mapping at a time (cleaner for large portfolios).</p>
-    </section>
+
+            <?php if (!empty($syncMeta['status']) && is_array($syncMeta['status'])): ?>
+                <ul class="status-list">
+                    <?php foreach ($syncMeta['status'] as $feed => $text): ?>
+                        <li><strong><?= htmlspecialchars((string) $feed, ENT_QUOTES, 'UTF-8') ?>:</strong> <?= htmlspecialchars((string) $text, ENT_QUOTES, 'UTF-8') ?></li>
+                    <?php endforeach; ?>
+                </ul>
+            <?php endif; ?>
+        </details>
+
+        <details class="accordion-group" open>
+            <summary>Branding & security</summary>
+            <div class="admin-grid">
+                <form method="post" class="admin-card">
+                    <h3>Change admin password</h3>
+                    <input type="hidden" name="intent" value="change_password">
+                    <input type="password" name="current_password" placeholder="Current password" required>
+                    <input type="password" name="new_password" placeholder="New password" required>
+                    <input type="password" name="confirm_password" placeholder="Confirm new password" required>
+                    <button class="btn" type="submit">Update password</button>
+                </form>
+
+                <form method="post" enctype="multipart/form-data" class="admin-card">
+                    <h3>Upload header logo</h3>
+                    <input type="hidden" name="intent" value="upload_logo">
+                    <input type="file" name="logo_file" accept=".png,.jpg,.jpeg,.webp,.svg" required>
+                    <button class="btn" type="submit">Upload logo</button>
+                </form>
+            </div>
+        </details>
+
+        <details class="accordion-group" open>
+            <summary>Extra tools</summary>
+            <div class="admin-grid">
+                <article class="admin-card">
+                    <h3>Make reservation</h3>
+                    <p>Create manual reservations and view reservation history on dedicated page.</p>
+                    <a class="btn accent" href="reservations.php" target="_blank" rel="noopener">Make Reservation</a>
+                </article>
+
+                <form method="post" class="admin-card">
+                    <h3>Database configuration</h3>
+                    <input type="hidden" name="intent" value="save_db_config">
+                    <input type="text" name="db_host" value="<?= htmlspecialchars((string) ($dbConfig['host'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB host" required>
+                    <input type="number" name="db_port" value="<?= (int) ($dbConfig['port'] ?? 3306) ?>" placeholder="DB port" required>
+                    <input type="text" name="db_name" value="<?= htmlspecialchars((string) ($dbConfig['name'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB name" required>
+                    <input type="text" name="db_user" value="<?= htmlspecialchars((string) ($dbConfig['user'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB user" required>
+                    <input type="password" name="db_pass" value="<?= htmlspecialchars((string) ($dbConfig['pass'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB password">
+                    <input type="text" name="db_charset" value="<?= htmlspecialchars((string) ($dbConfig['charset'] ?? 'utf8mb4'), ENT_QUOTES, 'UTF-8') ?>" placeholder="utf8mb4" required>
+                    <button class="btn" type="submit">Save DB config</button>
+                </form>
+
+                <form method="post" class="admin-card">
+                    <h3>Test DB connection</h3>
+                    <input type="hidden" name="intent" value="test_db_config">
+                    <input type="text" name="db_host" value="<?= htmlspecialchars((string) ($dbConfig['host'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB host" required>
+                    <input type="number" name="db_port" value="<?= (int) ($dbConfig['port'] ?? 3306) ?>" placeholder="DB port" required>
+                    <input type="text" name="db_name" value="<?= htmlspecialchars((string) ($dbConfig['name'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB name" required>
+                    <input type="text" name="db_user" value="<?= htmlspecialchars((string) ($dbConfig['user'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB user" required>
+                    <input type="password" name="db_pass" value="<?= htmlspecialchars((string) ($dbConfig['pass'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="DB password">
+                    <input type="text" name="db_charset" value="<?= htmlspecialchars((string) ($dbConfig['charset'] ?? 'utf8mb4'), ENT_QUOTES, 'UTF-8') ?>" placeholder="utf8mb4" required>
+                    <button class="btn accent" type="submit">Test connection</button>
+                </form>
+            </div>
+        </details>
+
+        <details class="accordion-group" open>
+            <summary>Reports, sharing, health & notification settings</summary>
+            <div class="admin-grid">
+                <form method="post" class="admin-card">
+                    <h3>Notification settings</h3>
+                    <input type="hidden" name="intent" value="save_notification_settings">
+                    <label><input type="checkbox" name="reservation_made" <?= !empty($notifSettings['reservation_made']) ? 'checked' : '' ?>> Reservation made (manual or synced)</label>
+                    <label><input type="checkbox" name="checkout_tomorrow" <?= !empty($notifSettings['checkout_tomorrow']) ? 'checked' : '' ?>> Tomorrow checkouts</label>
+                    <label><input type="checkbox" name="sync_failed" <?= !empty($notifSettings['sync_failed']) ? 'checked' : '' ?>> Sync/update unsuccessful</label>
+                    <button class="btn" type="submit">Save notifications</button>
+                </form>
+
+                <article class="admin-card">
+                    <h3>File sharing service</h3>
+                    <p>Folders, uploads, and file editing/deletion.</p>
+                    <a class="btn accent" href="file_sharing.php">Open File sharing</a>
+                </article>
+
+                <article class="admin-card">
+                    <h3>Reports</h3>
+                    <p>Generate reservation charts by dates and scope.</p>
+                    <a class="btn accent" href="reports.php">Open Reports</a>
+                </article>
+
+                <article class="admin-card">
+                    <h3>Server health check</h3>
+                    <p>Verify PHP, MySQL, and writable paths.</p>
+                    <a class="btn" href="healthcheck.php" target="_blank" rel="noopener">Open Health Check</a>
+                </article>
+            </div>
+        </details>
 </main>
 <script>
 window.ADMIN_APARTMENTS_BY_BUILDING = <?= json_encode($apartmentsByBuilding, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?: '{}' ?>;

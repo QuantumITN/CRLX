@@ -119,6 +119,13 @@ textarea{min-height:86px;resize:vertical}
 .notif-menu{display:none;position:absolute;right:0;top:40px;min-width:320px;max-width:min(420px,90vw);max-height:320px;overflow:auto;background:#fff;border:1px solid var(--border);border-radius:10px;padding:8px;z-index:50;box-shadow:0 10px 30px rgba(0,0,0,.15)}
 .notif-menu a{padding:7px 8px;border-radius:8px;text-decoration:none;color:var(--text);font-size:.9rem}
 .notif-menu a:hover{background:var(--surface-soft)}
+.notif-menu h4{margin:4px 4px 8px;font-size:.92rem;color:var(--text)}
+.notif-item{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;padding:6px;border-radius:8px}
+.notif-item.unread{background:#fff7e6;border:1px solid #f9d78c}
+.notif-item.read{background:transparent}
+.notif-item a{padding:4px 6px}
+.notif-mark-read,.notif-mark-all{font-size:.78rem;color:#7a5d18;text-decoration:underline;background:transparent}
+.notif-mark-all{display:inline-block;margin:0 4px 8px}
 
 .accordion-group{border:1px solid var(--border);border-radius:10px;background:var(--surface-soft);padding:8px}
 .accordion-group>summary{cursor:pointer;font-weight:700;color:var(--text)}

@@ -23,6 +23,66 @@ function headerNotificationSettings(): array
     return is_array($json) ? array_merge($defaults, $json) : $defaults;
 }
 
+
+function notificationReadFile(): string
+{
+    return __DIR__ . '/data/notification_reads.json';
+}
+
+function readNotificationReads(): array
+{
+    $file = notificationReadFile();
+    if (!file_exists($file)) {
+        return [];
+    }
+    $raw = file_get_contents($file);
+    $json = is_string($raw) ? json_decode($raw, true) : null;
+
+    return is_array($json) ? $json : [];
+}
+
+function writeNotificationReads(array $reads): void
+{
+    $file = notificationReadFile();
+    @file_put_contents($file, json_encode($reads, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+}
+
+function markNotificationReadFromRequest(array $knownIds = []): void
+{
+    if (!isAuthenticated()) {
+        return;
+    }
+
+    $reads = readNotificationReads();
+
+    if (isset($_GET['notif_mark_all']) && $_GET['notif_mark_all'] === '1') {
+        $now = gmdate('c');
+        foreach ($knownIds as $id) {
+            $reads[(string) $id] = $now;
+        }
+        writeNotificationReads($reads);
+        return;
+    }
+
+    $id = isset($_GET['notif_read']) ? trim((string) $_GET['notif_read']) : '';
+    if ($id === '') {
+        return;
+    }
+    if ($knownIds !== [] && !in_array($id, $knownIds, true)) {
+        return;
+    }
+
+    $reads[$id] = gmdate('c');
+    writeNotificationReads($reads);
+}
+
+function withNotifReadParam(string $url, string $notifId): string
+{
+    $sep = str_contains($url, '?') ? '&' : '?';
+
+    return $url . $sep . 'notif_read=' . urlencode($notifId);
+}
+
 function getHeaderNotifications(): array
 {
     $settings = headerNotificationSettings();
@@ -38,9 +98,12 @@ function getHeaderNotifications(): array
             $stmt = $pdo->query("SELECT reservation_uuid, title, apartment_id FROM reservations WHERE archived_flag = 0 ORDER BY created_at DESC LIMIT 5");
             $rows = $stmt ? $stmt->fetchAll() : [];
             foreach ($rows as $r) {
+                $uuid = (string) ($r['reservation_uuid'] ?? '');
+                $id = 'reservation:' . $uuid;
                 $items[] = [
+                    'id' => $id,
                     'text' => 'Reservation: ' . (string) ($r['title'] ?? 'New reservation') . ' (' . (string) ($r['apartment_id'] ?? '') . ')',
-                    'link' => 'index.php?open_reservation=' . urlencode((string) ($r['reservation_uuid'] ?? '')),
+                    'link' => 'index.php?open_reservation=' . urlencode($uuid),
                 ];
             }
         }
@@ -51,9 +114,12 @@ function getHeaderNotifications(): array
             $stmt->execute([':d' => $tomorrow]);
             $rows = $stmt->fetchAll();
             foreach ($rows as $r) {
+                $uuid = (string) ($r['reservation_uuid'] ?? '');
+                $id = 'checkout_tomorrow:' . $uuid;
                 $items[] = [
+                    'id' => $id,
                     'text' => 'Checkout tomorrow: ' . (string) ($r['apartment_id'] ?? '') . ' • ' . (string) ($r['title'] ?? ''),
-                    'link' => 'index.php?open_reservation=' . urlencode((string) ($r['reservation_uuid'] ?? '')),
+                    'link' => 'index.php?open_reservation=' . urlencode($uuid),
                 ];
             }
         }
@@ -68,13 +134,21 @@ function getHeaderNotifications(): array
             foreach ($status as $name => $msg) {
                 $text = (string) $msg;
                 if (stripos($text, 'failed') !== false || stripos($text, 'skip') !== false) {
-                    $items[] = ['text' => 'Sync issue: ' . (string) $name . ' - ' . $text, 'link' => 'healthcheck.php'];
+                    $id = 'sync_issue:' . sha1((string) $name . '|' . $text);
+                    $items[] = ['id' => $id, 'text' => 'Sync issue: ' . (string) $name . ' - ' . $text, 'link' => 'healthcheck.php'];
                 }
             }
         }
     }
 
-    return array_slice($items, 0, 12);
+    $items = array_slice($items, 0, 12);
+    $reads = readNotificationReads();
+    foreach ($items as &$item) {
+        $item['read'] = isset($reads[(string) ($item['id'] ?? '')]);
+    }
+    unset($item);
+
+    return $items;
 }
 
 function renderSiteHeader(string $pageTitle = 'CLR Calendar'): void
@@ -82,6 +156,10 @@ function renderSiteHeader(string $pageTitle = 'CLR Calendar'): void
     $logo = currentLogoUrl();
     $user = isAuthenticated() ? getAdminUsername() : '';
     $notifications = getHeaderNotifications();
+    $notifIds = array_map(static fn(array $n): string => (string) ($n['id'] ?? ''), $notifications);
+    markNotificationReadFromRequest($notifIds);
+    $notifications = getHeaderNotifications();
+    $unreadCount = count(array_filter($notifications, static fn(array $n): bool => empty($n['read'])));
     ?>
     <header class="site-header">
         <div class="site-header-inner">
@@ -106,13 +184,24 @@ function renderSiteHeader(string $pageTitle = 'CLR Calendar'): void
                     <a class="btn ghost" href="settings.php">Settings</a>
                     <a class="btn ghost" href="healthcheck.php">Health</a>
                     <details class="notif-wrap">
-                        <summary class="btn ghost">🔔 <?= count($notifications) ?></summary>
+                        <summary class="btn ghost">🔔 <?= $unreadCount ?> unread</summary>
                         <div class="notif-menu">
+                            <h4>Today's notifications</h4>
+                            <?php if (!empty($notifications)): ?>
+                                <a class="notif-mark-all" href="<?= htmlspecialchars((string) (basename((string) parse_url((string) $_SERVER['REQUEST_URI'], PHP_URL_PATH)) . '?notif_mark_all=1'), ENT_QUOTES, 'UTF-8') ?>">Mark all as read</a>
+                            <?php endif; ?>
                             <?php if (empty($notifications)): ?>
                                 <p class="tiny">No notifications.</p>
                             <?php else: ?>
                                 <?php foreach ($notifications as $n): ?>
-                                    <a href="<?= htmlspecialchars((string) $n['link'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $n['text'], ENT_QUOTES, 'UTF-8') ?></a>
+                                    <?php $notifId = (string) ($n['id'] ?? ''); ?>
+                                    <?php $notifLink = withNotifReadParam((string) $n['link'], $notifId); ?>
+                                    <div class="notif-item <?= empty($n['read']) ? 'unread' : 'read' ?>">
+                                        <a href="<?= htmlspecialchars($notifLink, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars((string) $n['text'], ENT_QUOTES, 'UTF-8') ?></a>
+                                        <?php if (empty($n['read'])): ?>
+                                            <a class="notif-mark-read" href="<?= htmlspecialchars((string) (basename((string) parse_url((string) $_SERVER['REQUEST_URI'], PHP_URL_PATH)) . '?notif_read=' . urlencode($notifId)), ENT_QUOTES, 'UTF-8') ?>">Mark read</a>
+                                        <?php endif; ?>
+                                    </div>
                                 <?php endforeach; ?>
                             <?php endif; ?>
                         </div>
