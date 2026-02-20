@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/ui.php';
 
@@ -16,7 +14,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $pass = (string) ($_POST['password'] ?? '');
 
     if (verifyAdminCredentials($user, $pass)) {
-        $_SESSION['auth_user'] = getAdminUsername();
+        loginAdminUser(getAdminUsername());
         if (!headers_sent()) {
             header('Location: ' . $redirect);
             exit;

@@ -1,4 +1,4 @@
-<?php declare(strict_types=1);
+<?php
 
 require_once __DIR__ . '/branding.php';
 require_once __DIR__ . '/auth.php';

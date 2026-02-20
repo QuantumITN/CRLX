@@ -1,6 +1,6 @@
 <?php
 
-declare(strict_types=1);
+
 
 const BRANDING_FILE = __DIR__ . '/data/branding.json';
 

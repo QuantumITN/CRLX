@@ -1,19 +1,18 @@
 <?php
 
-
 if (session_status() !== PHP_SESSION_ACTIVE) {
     if (!headers_sent()) {
         session_start();
-    } else {
-        if (!isset($_SESSION) || !is_array($_SESSION)) {
-            $_SESSION = [];
-        }
+    } elseif (!isset($_SESSION) || !is_array($_SESSION)) {
+        $_SESSION = [];
     }
 }
 
 const APP_ADMIN_USER = 'admin';
 const APP_ADMIN_DEFAULT_PASS = 'Turkiet3040?!';
 const APP_AUTH_FILE = __DIR__ . '/data/admin_auth.json';
+const APP_AUTH_COOKIE = 'crlx_auth';
+const APP_AUTH_COOKIE_TTL = 2592000;
 
 function ensureAuthStorage(): void
 {
@@ -88,6 +87,106 @@ function verifyAdminCredentials(string $username, string $password): bool
     return password_verify($password, $hash);
 }
 
+function authCookieSignature(string $username, string $expires): string
+{
+    $auth = getAuthData();
+    $secret = (string) ($auth['password_hash'] ?? APP_ADMIN_DEFAULT_PASS);
+
+    return hash_hmac('sha256', $username . '|' . $expires, $secret);
+}
+
+function buildAuthCookieValue(string $username): string
+{
+    $expires = (string) (time() + APP_AUTH_COOKIE_TTL);
+    $sig = authCookieSignature($username, $expires);
+
+    return base64_encode($username . '|' . $expires . '|' . $sig);
+}
+
+function readAuthCookieUsername(): string
+{
+    $raw = isset($_COOKIE[APP_AUTH_COOKIE]) ? (string) $_COOKIE[APP_AUTH_COOKIE] : '';
+    if ($raw === '') {
+        return '';
+    }
+
+    $decoded = base64_decode($raw, true);
+    if (!is_string($decoded)) {
+        return '';
+    }
+
+    $parts = explode('|', $decoded);
+    if (count($parts) !== 3) {
+        return '';
+    }
+
+    [$username, $expires, $sig] = $parts;
+    if ($username === '' || !ctype_digit($expires) || (int) $expires < time()) {
+        return '';
+    }
+
+    $expected = authCookieSignature($username, $expires);
+    if (!hash_equals($expected, $sig)) {
+        return '';
+    }
+
+    return $username;
+}
+
+function persistAuthCookie(string $username): void
+{
+    if (headers_sent()) {
+        return;
+    }
+
+    setcookie(
+        APP_AUTH_COOKIE,
+        buildAuthCookieValue($username),
+        [
+            'expires' => time() + APP_AUTH_COOKIE_TTL,
+            'path' => '/',
+            'secure' => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
+            'httponly' => true,
+            'samesite' => 'Lax',
+        ]
+    );
+}
+
+function clearAuthCookie(): void
+{
+    if (headers_sent()) {
+        return;
+    }
+
+    setcookie(APP_AUTH_COOKIE, '', [
+        'expires' => time() - 3600,
+        'path' => '/',
+        'secure' => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
+}
+
+function loginAdminUser(string $username): void
+{
+    $_SESSION['auth_user'] = $username;
+    persistAuthCookie($username);
+}
+
+function logoutAdminUser(): void
+{
+    $_SESSION = [];
+    clearAuthCookie();
+
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        if (ini_get('session.use_cookies') && !headers_sent()) {
+            $params = session_get_cookie_params();
+            setcookie(session_name(), '', time() - 42000, $params['path'], $params['domain'], (bool) $params['secure'], (bool) $params['httponly']);
+        }
+        session_destroy();
+    }
+}
+
 function changeAdminPassword(string $currentPassword, string $newPassword): array
 {
     $auth = getAuthData();
@@ -112,7 +211,19 @@ function changeAdminPassword(string $currentPassword, string $newPassword): arra
 
 function isAuthenticated(): bool
 {
-    return isset($_SESSION['auth_user']) && $_SESSION['auth_user'] === getAdminUsername();
+    $admin = getAdminUsername();
+    if (isset($_SESSION['auth_user']) && $_SESSION['auth_user'] === $admin) {
+        return true;
+    }
+
+    $cookieUser = readAuthCookieUsername();
+    if ($cookieUser !== '' && hash_equals($admin, $cookieUser)) {
+        $_SESSION['auth_user'] = $admin;
+
+        return true;
+    }
+
+    return false;
 }
 
 function requireAuth(): void
