@@ -314,6 +314,7 @@
 
   function enableDrag(el, reservation) {
     let startX = 0;
+    let grabOffsetX = 0;
     let active = false;
     let moved = false;
     let original = null;
@@ -355,6 +356,7 @@
       el.classList.add('bar-origin-shadow');
 
       const rect = el.getBoundingClientRect();
+      grabOffsetX = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
       proxyEl = el.cloneNode(true);
       proxyEl.classList.add('bar-drag-proxy');
       proxyEl.style.position = 'fixed';
@@ -374,7 +376,7 @@
       if (Math.abs(dx) > 5) moved = true;
 
       if (proxyEl) {
-        proxyEl.style.left = `${ev.clientX - proxyEl.offsetWidth / 2}px`;
+        proxyEl.style.left = `${ev.clientX - grabOffsetX}px`;
         proxyEl.style.top = `${ev.clientY - proxyEl.offsetHeight / 2}px`;
       }
 
@@ -391,8 +393,8 @@
       const track = rowEl.querySelector('.track');
       if (!track) return;
       const trackRect = track.getBoundingClientRect();
-      const relX = ev.clientX - trackRect.left;
-      const startOffset = Math.max(0, Math.min(monthDays - 1, Math.round(relX / dayWidth)));
+      const relX = (ev.clientX - grabOffsetX) - trackRect.left;
+      const startOffset = Math.max(0, Math.min(monthDays - 1, Math.floor(relX / dayWidth)));
       pendingStartOffset = startOffset;
 
       const oldLen = diffDays(toDate(reservation.end), toDate(reservation.start));
@@ -426,8 +428,16 @@
       const dropTarget = document.elementFromPoint(ev.clientX, ev.clientY);
       const rowEl = dropTarget?.closest('.apt-row') || hoverRow || el.closest('.apt-row');
       const targetApartment = rowEl?.dataset.apartmentId || reservation.apartment_id;
-
-      const newStartOffset = pendingStartOffset ?? Math.max(0, Math.round((parseFloat(el.style.left || '0') - 2) / dayWidth));
+      let newStartOffset = pendingStartOffset;
+      const targetTrack = rowEl?.querySelector('.track');
+      if (targetTrack) {
+        const targetRect = targetTrack.getBoundingClientRect();
+        const relX = (ev.clientX - grabOffsetX) - targetRect.left;
+        newStartOffset = Math.max(0, Math.min(monthDays - 1, Math.floor(relX / dayWidth)));
+      }
+      if (typeof newStartOffset !== 'number' || Number.isNaN(newStartOffset)) {
+        newStartOffset = Math.max(0, Math.floor((parseFloat(el.style.left || '0') - 2) / dayWidth));
+      }
       const oldLen = diffDays(toDate(reservation.end), toDate(reservation.start));
 
       const newStart = new Date(monthStart);
