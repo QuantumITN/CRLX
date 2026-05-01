@@ -538,6 +538,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     }
+    if ($intent === 'clear_feeds') {
+        $buildingId = (string) ($_POST['feed_building_id'] ?? '');
+        $apartmentId = (string) ($_POST['feed_apartment_id'] ?? '');
+        if ($buildingId === '' || $apartmentId === '') {
+            $errors[] = 'Select both building and apartment to delete iCal mapping.';
+        } else {
+            $updated = false;
+            foreach ($buildings as &$building) {
+                if ((string) ($building['id'] ?? '') !== $buildingId) {
+                    continue;
+                }
+                foreach ($building['apartments'] as &$apartment) {
+                    if ((string) ($apartment['id'] ?? '') !== $apartmentId) {
+                        continue;
+                    }
+                    $apartment['airbnb_url'] = '';
+                    $apartment['booking_url'] = '';
+                    $updated = true;
+                    break;
+                }
+                unset($apartment);
+                break;
+            }
+            unset($building);
+            if ($updated) {
+                writeJson(BUILDINGS_FILE, $buildings);
+                $messages[] = 'Apartment iCal import/export mapping deleted.';
+            } else {
+                $errors[] = 'Could not find selected apartment in selected building.';
+            }
+        }
+    }
 
     if ($intent === 'save_settings') {
         $minutes = (int) ($_POST['sync_interval_minutes'] ?? 30);
@@ -806,6 +838,12 @@ foreach ($buildings as $building) {
                 </div>
                 <button class="btn" type="submit">Save feed URLs</button>
             </form>
+            <form method="post" class="feed-mapping-form" onsubmit="return confirm('Are you sure you want to delete iCal import/export mapping for this apartment?');">
+                <input type="hidden" name="intent" value="clear_feeds">
+                <input type="hidden" name="feed_building_id" id="clear_feed_building_id" value="">
+                <input type="hidden" name="feed_apartment_id" id="clear_feed_apartment_id" value="">
+                <button class="btn danger" type="submit">Delete iCal import/export mapping</button>
+            </form>
             <p class="tiny">Use dropdowns to manage one apartment mapping at a time (cleaner for large portfolios).</p>
         </details>
 
@@ -983,6 +1021,19 @@ window.ADMIN_APARTMENTS_BY_BUILDING = <?= json_encode($apartmentsByBuilding, JSO
     if (feedApartment) {
         feedApartment.addEventListener('change', loadSelectedApartmentFeeds);
     }
+    const clearFeedBuilding = document.getElementById('clear_feed_building_id');
+    const clearFeedApartment = document.getElementById('clear_feed_apartment_id');
+    function syncClearFeedFields() {
+        if (clearFeedBuilding) clearFeedBuilding.value = feedBuilding ? feedBuilding.value : '';
+        if (clearFeedApartment) clearFeedApartment.value = feedApartment ? feedApartment.value : '';
+    }
+    if (feedBuilding) {
+        feedBuilding.addEventListener('change', syncClearFeedFields);
+    }
+    if (feedApartment) {
+        feedApartment.addEventListener('change', syncClearFeedFields);
+    }
+    syncClearFeedFields();
 
     const syncScope = document.getElementById('sync_scope');
     const syncBuilding = document.getElementById('sync_building_id');
