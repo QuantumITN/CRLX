@@ -327,6 +327,61 @@ function dbUpdateManualReservation(array $reservation): bool
     return $ok;
 }
 
+function dbGetReservationByUuid(string $uuid): ?array
+{
+    $pdo = getDbPdo();
+    if (!$pdo) {
+        return null;
+    }
+    $stmt = $pdo->prepare('SELECT reservation_uuid, external_uid, booking_channel FROM reservations WHERE reservation_uuid = :uuid AND archived_flag = 0 LIMIT 1');
+    $stmt->execute([':uuid' => $uuid]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    return is_array($row) ? $row : null;
+}
+
+function pushPricelabsReservationUpdate(array $reservation): array
+{
+    $settings = readJson(SETTINGS_FILE, []);
+    $pl = is_array($settings['pricelabs'] ?? null) ? $settings['pricelabs'] : [];
+    $apiKey = trim((string) ($pl['api_key'] ?? ''));
+    $baseUrl = rtrim(trim((string) ($pl['base_url'] ?? 'https://api.pricelabs.co')), '/');
+    $externalUid = trim((string) ($reservation['external_uid'] ?? ''));
+
+    if ($apiKey === '') {
+        return ['ok' => false, 'message' => 'PriceLabs API key is missing in Settings.'];
+    }
+    if ($externalUid === '') {
+        return ['ok' => false, 'message' => 'Reservation has no PriceLabs external ID.'];
+    }
+
+    $payload = [
+        'reservation_id' => $externalUid,
+        'check_in' => (string) ($reservation['start'] ?? ''),
+        'check_out' => (string) ($reservation['end'] ?? ''),
+        'status' => (string) ($reservation['status'] ?? ''),
+        'guest_name' => trim(((string) ($reservation['customer_first_name'] ?? '')) . ' ' . ((string) ($reservation['customer_last_name'] ?? ''))),
+        'guest_email' => (string) ($reservation['customer_email'] ?? ''),
+        'guest_phone' => (string) ($reservation['customer_phone'] ?? ''),
+        'price_total' => ((string) ($reservation['price_total'] ?? '') === '' ? null : (float) $reservation['price_total']),
+        'currency' => (string) ($reservation['price_currency'] ?? ''),
+        'notes' => (string) ($reservation['notes'] ?? ''),
+    ];
+    $json = json_encode($payload);
+    if (!is_string($json)) {
+        return ['ok' => false, 'message' => 'Could not encode PriceLabs payload.'];
+    }
+
+    $url = $baseUrl . '/v1/reservations/' . rawurlencode($externalUid);
+    $headers = "Content-Type: application/json\r\nAccept: application/json\r\nx-api-key: {$apiKey}\r\nAuthorization: Bearer {$apiKey}\r\nUser-Agent: CRLX-PriceLabs-Bridge/1.0";
+    $ctx = stream_context_create(['http' => ['method' => 'PUT', 'timeout' => 30, 'header' => $headers, 'content' => $json, 'ignore_errors' => true]]);
+    $raw = @file_get_contents($url, false, $ctx);
+    if ($raw === false) {
+        return ['ok' => false, 'message' => 'Failed to sync update to PriceLabs API.'];
+    }
+
+    return ['ok' => true, 'message' => 'Synced update to PriceLabs.'];
+}
+
 function dbDeleteManualReservation(string $reservationId): bool
 {
     $pdo = getDbPdo();
@@ -470,7 +525,18 @@ if ($action === 'api_update_reservation' && $_SERVER['REQUEST_METHOD'] === 'POST
     $payload = json_decode((string) file_get_contents('php://input'), true);
     $reservation = is_array($payload['reservation'] ?? null) ? $payload['reservation'] : [];
     $ok = dbUpdateManualReservation($reservation);
-    echo json_encode(['ok' => $ok, 'message' => $ok ? 'Updated.' : 'Update rejected due to overlap or invalid payload.']);
+    $message = $ok ? 'Updated.' : 'Update rejected due to overlap or invalid payload.';
+    if ($ok) {
+        $existing = dbGetReservationByUuid((string) ($reservation['id'] ?? ''));
+        if ($existing && strtolower((string) ($existing['booking_channel'] ?? '')) === 'pricelabs') {
+            $reservation['external_uid'] = (string) ($existing['external_uid'] ?? '');
+            $sync = pushPricelabsReservationUpdate($reservation);
+            if (!$sync['ok']) {
+                $message .= ' Local save OK, but PriceLabs sync failed: ' . (string) ($sync['message'] ?? '');
+            }
+        }
+    }
+    echo json_encode(['ok' => $ok, 'message' => $message]);
     exit;
 }
 
