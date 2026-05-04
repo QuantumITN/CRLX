@@ -131,6 +131,7 @@ function flattenApartments(array $buildings): array
                 'name' => (string) ($apartment['name'] ?? 'Apartment'),
                 'airbnb_url' => (string) ($apartment['airbnb_url'] ?? ''),
                 'booking_url' => (string) ($apartment['booking_url'] ?? ''),
+                'external_refs' => is_array($apartment['external_refs'] ?? null) ? $apartment['external_refs'] : [],
             ];
         }
     }
@@ -267,20 +268,82 @@ function runSync(array $buildings, array &$syncMeta, string $scopeType = 'all', 
         }
     }
 
+    $settings = readJson(SETTINGS_FILE, []);
+    $plCfg = is_array($settings['pricelabs'] ?? null) ? $settings['pricelabs'] : [];
+    $plKey = trim((string) ($plCfg['api_key'] ?? ''));
+    $plBase = rtrim(trim((string) ($plCfg['base_url'] ?? 'https://api.pricelabs.co')), '/');
+    if (!empty($plCfg['enabled']) && $plKey !== '') {
+        foreach ($targets as $apartment) {
+            $refs = is_array($apartment['external_refs'] ?? null) ? $apartment['external_refs'] : [];
+            $listingId = trim((string) ($refs['pricelabs_listing_id'] ?? ''));
+            if ($listingId === '') {
+                continue;
+            }
+            $plEvents = [];
+            foreach ([
+                '/v1/reservations?listing_id=' . rawurlencode($listingId),
+                '/v1/bookings?listing_id=' . rawurlencode($listingId),
+                '/v1/listings/' . rawurlencode($listingId) . '/reservations',
+            ] as $endpoint) {
+                $ctx = stream_context_create([
+                    'http' => [
+                        'method' => 'GET',
+                        'timeout' => 30,
+                        'header' => "Accept: application/json\r\nx-api-key: {$plKey}\r\nAuthorization: Bearer {$plKey}\r\nUser-Agent: CRLX-PriceLabs-Bridge/1.0",
+                    ],
+                ]);
+                $raw = @file_get_contents($plBase . $endpoint, false, $ctx);
+                $json = is_string($raw) ? json_decode($raw, true) : null;
+                if (!is_array($json)) {
+                    continue;
+                }
+                $rows = $json['reservations'] ?? $json['bookings'] ?? $json['data'] ?? $json['results'] ?? $json;
+                if (!is_array($rows)) {
+                    continue;
+                }
+                foreach ($rows as $row) {
+                    if (!is_array($row)) {
+                        continue;
+                    }
+                    $start = (string) ($row['check_in'] ?? $row['start_date'] ?? $row['arrival_date'] ?? '');
+                    $end = (string) ($row['check_out'] ?? $row['end_date'] ?? $row['departure_date'] ?? '');
+                    if ($start === '' || $end === '') {
+                        continue;
+                    }
+                    $plEvents[] = [
+                        'id' => 'pl_' . md5($listingId . '|' . ($row['id'] ?? $row['reservation_id'] ?? $start . $end)),
+                        'external_uid' => (string) ($row['id'] ?? $row['reservation_id'] ?? ''),
+                        'apartment_id' => (string) ($apartment['id'] ?? ''),
+                        'title' => (string) ($row['guest_name'] ?? $row['title'] ?? $apartment['name'] . ' PriceLabs booking'),
+                        'status' => (string) ($row['status'] ?? 'booked'),
+                        'start' => substr($start, 0, 10),
+                        'end' => substr($end, 0, 10),
+                        'source' => 'pricelabs',
+                        'price_total' => ((string) ($row['price_total'] ?? $row['amount'] ?? '') === '' ? null : (float) ($row['price_total'] ?? $row['amount'])),
+                        'price_currency' => (string) ($row['currency'] ?? 'EUR'),
+                    ];
+                }
+                break;
+            }
+            $ical = array_merge($ical, $plEvents);
+            $status[$apartment['name'] . ' (PriceLabs)'] = 'Imported ' . count($plEvents) . ' reservation(s)';
+        }
+    }
+
     $pdo = getDbPdo();
     if ($pdo) {
         try {
             $pdo->beginTransaction();
             if ($scopeType === 'all') {
-                $pdo->exec("DELETE FROM reservations WHERE source='ical'");
+                $pdo->exec("DELETE FROM reservations WHERE source='ical' OR booking_channel='pricelabs'");
             } else {
                 $placeholders = implode(',', array_fill(0, count($targetApartmentIds), '?'));
-                $del = $pdo->prepare("DELETE FROM reservations WHERE source='ical' AND apartment_id IN ($placeholders)");
+                $del = $pdo->prepare("DELETE FROM reservations WHERE (source='ical' OR booking_channel='pricelabs') AND apartment_id IN ($placeholders)");
                 if ($del) {
                     $del->execute($targetApartmentIds);
                 }
             }
-            $ins = $pdo->prepare('INSERT INTO reservations (reservation_uuid, apartment_id, source, external_uid, title, status, start_date, end_date, readonly_flag, booking_channel) VALUES (:uuid,:apartment,:source,:external_uid,:title,:status,:start,:end,1,:channel)');
+            $ins = $pdo->prepare('INSERT INTO reservations (reservation_uuid, apartment_id, source, external_uid, title, status, start_date, end_date, readonly_flag, booking_channel, price_total, price_currency) VALUES (:uuid,:apartment,:source,:external_uid,:title,:status,:start,:end,1,:channel,:price_total,:currency)');
             foreach ($ical as $r) {
                 $apt = (string) $r['apartment_id'];
                 $start = (string) $r['start'];
@@ -300,6 +363,8 @@ function runSync(array $buildings, array &$syncMeta, string $scopeType = 'all', 
                     ':start' => $start,
                     ':end' => $end,
                     ':channel' => (string) ($r['source'] ?? 'ical'),
+                    ':price_total' => ((string) ($r['price_total'] ?? '') === '' ? null : (float) $r['price_total']),
+                    ':currency' => (string) ($r['price_currency'] ?? 'EUR'),
                 ]);
             }
             $pdo->commit();
