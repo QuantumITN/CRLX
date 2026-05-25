@@ -230,16 +230,45 @@ return " . $export . ";
 function runSync(array $buildings, array &$syncMeta, string $scopeType = 'all', string $scopeValue = ''): array
 {
     $mapPriceLabsChannel = static function (array $row): string {
-        $raw = strtolower(trim((string) ($row['pms'] ?? $row['channel'] ?? $row['source'] ?? $row['ota'] ?? '')));
-        if (str_contains($raw, 'airbnb')) {
-            return 'airbnb';
+        $channelFields = [
+            'channel', 'source', 'ota', 'pms', 'integration', 'integration_name',
+            'channel_name', 'source_name', 'reservation_source', 'booking_source',
+            'platform', 'platform_name', 'provider', 'provider_name', 'pms_name',
+        ];
+
+        $candidates = [];
+        foreach ($channelFields as $field) {
+            if (isset($row[$field]) && is_scalar($row[$field])) {
+                $candidates[] = strtolower(trim((string) $row[$field]));
+            }
         }
-        if (str_contains($raw, 'booking')) {
-            return 'booking';
+
+        foreach ($row as $value) {
+            if (is_array($value)) {
+                foreach ($channelFields as $field) {
+                    if (isset($value[$field]) && is_scalar($value[$field])) {
+                        $candidates[] = strtolower(trim((string) $value[$field]));
+                    }
+                }
+            }
         }
-        if (str_contains($raw, 'expedia')) {
-            return 'expedia';
+
+        $combined = implode(' | ', array_filter($candidates, static fn(string $v): bool => $v !== ''));
+        if ($combined !== '') {
+            if (str_contains($combined, 'airbnb')) {
+                return 'airbnb';
+            }
+            if (str_contains($combined, 'booking.com') || str_contains($combined, 'booking')) {
+                return 'booking';
+            }
+            if (str_contains($combined, 'expedia')) {
+                return 'expedia';
+            }
+            if (str_contains($combined, 'vrbo') || str_contains($combined, 'homeaway')) {
+                return 'vrbo';
+            }
         }
+
         return 'pricelabs';
     };
     $extractRows = static function (array $json): array {
