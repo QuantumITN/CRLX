@@ -668,10 +668,11 @@ function runSync(array $buildings, array &$syncMeta): void
                 $rowListingId = trim((string) ($row['listing_id'] ?? $row['property_id'] ?? $row['room_id'] ?? ''));
                 $rowListingName = strtolower(trim((string) ($row['listing_name'] ?? $row['property_name'] ?? $row['room_name'] ?? $row['unit_name'] ?? '')));
                 $aptName = strtolower(trim((string) ($apartment['name'] ?? '')));
-                if ($rowListingId !== '' && $rowListingId !== $listingId) {
+                $nameMatched = $rowListingName !== '' && $aptName !== '' && (str_contains($rowListingName, $aptName) || str_contains($aptName, $rowListingName));
+                if ($rowListingId !== '' && $rowListingId !== $listingId && !$nameMatched) {
                     continue;
                 }
-                if ($rowListingId === '' && $rowListingName !== '' && $aptName !== '' && !str_contains($rowListingName, $aptName) && !str_contains($aptName, $rowListingName)) {
+                if ($rowListingId === '' && !$nameMatched) {
                     continue;
                 }
                 $start = $pickDate($row, ['check_in', 'checkin', 'start_date', 'arrival_date', 'from_date', 'date_from']);
