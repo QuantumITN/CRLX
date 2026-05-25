@@ -3,6 +3,7 @@
 
 
 require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/ui.php';
 requireAuth();
 
@@ -411,6 +412,96 @@ function matchPricelabsListings(array $plListings, array &$buildings): int
     return $mapped;
 }
 
+function syncPricelabsReservations(array $buildings, array $cfg): array
+{
+    $apiKey = trim((string) ($cfg['api_key'] ?? ''));
+    $baseUrl = rtrim(trim((string) ($cfg['base_url'] ?? 'https://api.pricelabs.co')), '/');
+    if ($apiKey === '') {
+        return ['ok' => false, 'imported' => 0, 'message' => 'PriceLabs API key is empty.'];
+    }
+
+    $pdo = getDbPdo();
+    if (!$pdo) {
+        return ['ok' => false, 'imported' => 0, 'message' => 'Database is not configured.'];
+    }
+
+    $rowsToInsert = [];
+    foreach ($buildings as $building) {
+        foreach (($building['apartments'] ?? []) as $apartment) {
+            $refs = is_array($apartment['external_refs'] ?? null) ? $apartment['external_refs'] : [];
+            $listingId = trim((string) ($refs['pricelabs_listing_id'] ?? ''));
+            if ($listingId === '') {
+                continue;
+            }
+            foreach ([
+                '/v1/reservations?listing_id=' . rawurlencode($listingId),
+                '/v1/bookings?listing_id=' . rawurlencode($listingId),
+                '/v1/listings/' . rawurlencode($listingId) . '/reservations',
+            ] as $endpoint) {
+                $ctx = stream_context_create(['http' => ['method' => 'GET', 'timeout' => 30, 'header' => "Accept: application/json\r\nx-api-key: {$apiKey}\r\nAuthorization: Bearer {$apiKey}\r\nUser-Agent: CRLX-PriceLabs-Bridge/1.0"]]);
+                $raw = @file_get_contents($baseUrl . $endpoint, false, $ctx);
+                $json = is_string($raw) ? json_decode($raw, true) : null;
+                if (!is_array($json)) {
+                    continue;
+                }
+                $rows = $json['reservations'] ?? $json['bookings'] ?? $json['data'] ?? $json['results'] ?? $json;
+                if (!is_array($rows)) {
+                    continue;
+                }
+                foreach ($rows as $row) {
+                    if (!is_array($row)) {
+                        continue;
+                    }
+                    $start = substr((string) ($row['check_in'] ?? $row['start_date'] ?? $row['arrival_date'] ?? ''), 0, 10);
+                    $end = substr((string) ($row['check_out'] ?? $row['end_date'] ?? $row['departure_date'] ?? ''), 0, 10);
+                    if ($start === '' || $end === '') {
+                        continue;
+                    }
+                    $rowsToInsert[] = [
+                        'id' => 'pl_' . md5($listingId . '|' . ($row['id'] ?? $row['reservation_id'] ?? $start . $end)),
+                        'external_uid' => (string) ($row['id'] ?? $row['reservation_id'] ?? ''),
+                        'apartment_id' => (string) ($apartment['id'] ?? ''),
+                        'title' => (string) ($row['guest_name'] ?? $row['title'] ?? ((string) ($apartment['name'] ?? 'PriceLabs booking'))),
+                        'status' => (string) ($row['status'] ?? 'booked'),
+                        'start' => $start,
+                        'end' => $end,
+                        'price_total' => ((string) ($row['price_total'] ?? $row['amount'] ?? '') === '' ? null : (float) ($row['price_total'] ?? $row['amount'])),
+                        'price_currency' => (string) ($row['currency'] ?? 'EUR'),
+                    ];
+                }
+                break;
+            }
+        }
+    }
+
+    try {
+        $pdo->beginTransaction();
+        $pdo->exec("DELETE FROM reservations WHERE booking_channel='pricelabs'");
+        $ins = $pdo->prepare('INSERT INTO reservations (reservation_uuid, apartment_id, source, external_uid, title, status, start_date, end_date, readonly_flag, booking_channel, price_total, price_currency) VALUES (:uuid,:apartment,:source,:external_uid,:title,:status,:start,:end,1,:channel,:price_total,:currency)');
+        foreach ($rowsToInsert as $r) {
+            $ins->execute([
+                ':uuid' => (string) $r['id'],
+                ':apartment' => (string) $r['apartment_id'],
+                ':source' => 'ical',
+                ':external_uid' => (string) $r['external_uid'],
+                ':title' => (string) $r['title'],
+                ':status' => (string) $r['status'],
+                ':start' => (string) $r['start'],
+                ':end' => (string) $r['end'],
+                ':channel' => 'pricelabs',
+                ':price_total' => $r['price_total'],
+                ':currency' => (string) $r['price_currency'],
+            ]);
+        }
+        $pdo->commit();
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        return ['ok' => false, 'imported' => 0, 'message' => 'PriceLabs reservations sync failed in DB write.'];
+    }
+
+    return ['ok' => true, 'imported' => count($rowsToInsert), 'message' => 'PriceLabs reservations synced.'];
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $intent = $_POST['intent'] ?? '';
 
@@ -441,7 +532,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $mapped = matchPricelabsListings($res['listings'], $buildings);
             if (writeJson(BUILDINGS_FILE, $buildings)) {
+                $sync = syncPricelabsReservations($buildings, $settings['pricelabs'] ?? []);
                 $messages[] = 'PriceLabs Bridge connected. Matched ' . $mapped . ' listing(s) to existing apartments.';
+                $messages[] = $sync['message'] . ' Imported ' . (int) ($sync['imported'] ?? 0) . ' reservation(s).';
             } else {
                 $errors[] = 'PriceLabs listings matched but could not be saved.';
             }
