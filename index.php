@@ -466,7 +466,7 @@ function runSync(array $buildings, array &$syncMeta, ?DateTimeImmutable $anchorM
             if (str_contains($combined, 'airbnb')) {
                 return 'airbnb';
             }
-            if (str_contains($combined, 'booking.com') || str_contains($combined, 'booking')) {
+            if (str_contains($combined, 'booking.com') || str_contains($combined, ' booking com') || str_contains($combined, 'bookingcom')) {
                 return 'booking';
             }
             if (str_contains($combined, 'expedia')) {
@@ -1054,12 +1054,10 @@ $liveReservations = array_map(static function (array $r) use ($todayStr, $tomorr
     $channelProbe = strtolower(implode(' | ', array_filter([
         $channel,
         strtolower((string) ($r['source'] ?? '')),
-        strtolower((string) ($r['title'] ?? '')),
-        strtolower((string) ($r['notes'] ?? '')),
     ], static fn(string $v): bool => $v !== '')));
     if (str_contains($channelProbe, 'airbnb')) {
         $r['booking_channel'] = 'airbnb';
-    } elseif (str_contains($channelProbe, 'booking.com') || str_contains($channelProbe, 'booking')) {
+    } elseif (str_contains($channelProbe, 'booking.com') || str_contains($channelProbe, ' booking com') || str_contains($channelProbe, 'bookingcom')) {
         $r['booking_channel'] = 'booking';
     } elseif (str_contains($channelProbe, 'expedia')) {
         $r['booking_channel'] = 'expedia';

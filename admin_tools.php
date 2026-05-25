@@ -258,7 +258,7 @@ function runSync(array $buildings, array &$syncMeta, string $scopeType = 'all', 
             if (str_contains($combined, 'airbnb')) {
                 return 'airbnb';
             }
-            if (str_contains($combined, 'booking.com') || str_contains($combined, 'booking')) {
+            if (str_contains($combined, 'booking.com') || str_contains($combined, ' booking com') || str_contains($combined, 'bookingcom')) {
                 return 'booking';
             }
             if (str_contains($combined, 'expedia')) {

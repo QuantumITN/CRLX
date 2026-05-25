@@ -446,7 +446,7 @@ function syncPricelabsReservations(array $buildings, array $cfg): array
             if (str_contains($combined, 'airbnb')) {
                 return 'airbnb';
             }
-            if (str_contains($combined, 'booking.com') || str_contains($combined, 'booking')) {
+            if (str_contains($combined, 'booking.com') || str_contains($combined, ' booking com') || str_contains($combined, 'bookingcom')) {
                 return 'booking';
             }
             if (str_contains($combined, 'expedia')) {
