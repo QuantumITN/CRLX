@@ -414,6 +414,33 @@ function matchPricelabsListings(array $plListings, array &$buildings): int
 
 function syncPricelabsReservations(array $buildings, array $cfg): array
 {
+    $extractRows = static function (array $json): array {
+        $candidates = [
+            $json['reservations'] ?? null,
+            $json['bookings'] ?? null,
+            $json['data'] ?? null,
+            $json['results'] ?? null,
+            $json['payload']['reservations'] ?? null,
+            $json['payload']['bookings'] ?? null,
+            $json['response']['reservations'] ?? null,
+            $json['response']['bookings'] ?? null,
+        ];
+        foreach ($candidates as $candidate) {
+            if (is_array($candidate)) {
+                return $candidate;
+            }
+        }
+        return array_values(array_filter($json, static fn($v): bool => is_array($v)));
+    };
+    $pickDate = static function (array $row, array $keys): string {
+        foreach ($keys as $k) {
+            $v = (string) ($row[$k] ?? '');
+            if ($v !== '') {
+                return substr($v, 0, 10);
+            }
+        }
+        return '';
+    };
     $apiKey = trim((string) ($cfg['api_key'] ?? ''));
     $baseUrl = rtrim(trim((string) ($cfg['base_url'] ?? 'https://api.pricelabs.co')), '/');
     if ($apiKey === '') {
@@ -456,7 +483,7 @@ function syncPricelabsReservations(array $buildings, array $cfg): array
                 if (!is_array($json)) {
                     continue;
                 }
-                $rows = $json['reservations'] ?? $json['bookings'] ?? $json['data'] ?? $json['results'] ?? $json;
+                $rows = $extractRows($json);
                 if (!is_array($rows)) {
                     continue;
                 }
@@ -464,17 +491,19 @@ function syncPricelabsReservations(array $buildings, array $cfg): array
                     if (!is_array($row)) {
                         continue;
                     }
-                    $start = substr((string) ($row['check_in'] ?? $row['start_date'] ?? $row['arrival_date'] ?? ''), 0, 10);
-                    $end = substr((string) ($row['check_out'] ?? $row['end_date'] ?? $row['departure_date'] ?? ''), 0, 10);
+                    $start = $pickDate($row, ['check_in', 'checkin', 'start_date', 'arrival_date', 'from_date', 'date_from']);
+                    $end = $pickDate($row, ['check_out', 'checkout', 'end_date', 'departure_date', 'to_date', 'date_to']);
                     if ($start === '' || $end === '') {
                         continue;
                     }
+                    $rawStatus = strtolower(trim((string) ($row['status'] ?? $row['reservation_status'] ?? $row['booking_status'] ?? 'booked')));
+                    $status = in_array($rawStatus, ['booked', 'reserved', 'blocked', 'cancelled', 'checkedout', 'checked_out'], true) ? $rawStatus : 'booked';
                     $rowsToInsert[] = [
                         'id' => 'pl_' . md5($listingId . '|' . ($row['id'] ?? $row['reservation_id'] ?? $start . $end)),
                         'external_uid' => (string) ($row['id'] ?? $row['reservation_id'] ?? ''),
                         'apartment_id' => (string) ($apartment['id'] ?? ''),
                         'title' => (string) ($row['guest_name'] ?? $row['title'] ?? ((string) ($apartment['name'] ?? 'PriceLabs booking'))),
-                        'status' => (string) ($row['status'] ?? 'booked'),
+                        'status' => $status,
                         'start' => $start,
                         'end' => $end,
                         'price_total' => ((string) ($row['price_total'] ?? $row['amount'] ?? '') === '' ? null : (float) ($row['price_total'] ?? $row['amount'])),
