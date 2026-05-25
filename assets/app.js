@@ -260,9 +260,6 @@
       bar.style.background = statusColors[r.status] || '#64748b';
       const sourceRaw = String(r.booking_channel || r.source || 'manual').toLowerCase();
       let sourceKey = sourceRaw.includes('booking') ? 'booking' : (sourceRaw.includes('airbnb') ? 'airbnb' : sourceRaw);
-      if (sourceKey === 'pricelabs') {
-        sourceKey = '';
-      }
       const sourceColor = sourceColors[sourceKey] || '#475569';
 
       const content = document.createElement('span');
@@ -271,15 +268,13 @@
       const sourceChip = document.createElement('span');
       sourceChip.className = 'bar-source-chip';
       sourceChip.style.background = sourceColor;
-      sourceChip.textContent = sourceKey === 'booking' ? 'BOOKING.COM' : sourceKey.toUpperCase();
+      sourceChip.textContent = sourceKey === 'booking' ? 'BOOKING.COM' : (sourceKey === 'pricelabs' ? 'LIVE IMPORT' : sourceKey.toUpperCase());
 
       const text = document.createElement('span');
       text.className = 'bar-text';
       text.textContent = `${(r.title || r.status || 'reservation').toUpperCase()} (${r.start} → ${r.end})`;
 
-      if (sourceKey !== '') {
-        content.appendChild(sourceChip);
-      }
+      content.appendChild(sourceChip);
       content.appendChild(text);
       bar.appendChild(content);
       bar.addEventListener('click', () => {

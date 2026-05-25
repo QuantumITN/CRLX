@@ -1051,12 +1051,22 @@ $liveReservations = array_map(static function (array $r) use ($todayStr, $tomorr
     } elseif ($start !== '' && $start > $todayStr) {
         $r['status'] = 'reserved';
     }
-    if (str_contains($channel, 'airbnb')) {
+    $channelProbe = strtolower(implode(' | ', array_filter([
+        $channel,
+        strtolower((string) ($r['source'] ?? '')),
+        strtolower((string) ($r['title'] ?? '')),
+        strtolower((string) ($r['notes'] ?? '')),
+    ], static fn(string $v): bool => $v !== '')));
+    if (str_contains($channelProbe, 'airbnb')) {
         $r['booking_channel'] = 'airbnb';
-    } elseif (str_contains($channel, 'booking')) {
+    } elseif (str_contains($channelProbe, 'booking.com') || str_contains($channelProbe, 'booking')) {
         $r['booking_channel'] = 'booking';
-    } elseif (str_contains($channel, 'expedia')) {
+    } elseif (str_contains($channelProbe, 'expedia')) {
         $r['booking_channel'] = 'expedia';
+    } elseif (str_contains($channelProbe, 'vrbo') || str_contains($channelProbe, 'homeaway')) {
+        $r['booking_channel'] = 'vrbo';
+    } elseif ($channel === '') {
+        $r['booking_channel'] = 'pricelabs';
     }
     return $r;
 }, $liveReservations);
