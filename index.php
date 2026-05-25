@@ -600,6 +600,52 @@ function runSync(array $buildings, array &$syncMeta): void
                 break;
             }
         }
+        if ($plGlobalRows !== []) {
+            $knownListingIds = [];
+            foreach ($apartments as $apartmentKnown) {
+                $refsKnown = is_array($apartmentKnown['external_refs'] ?? null) ? $apartmentKnown['external_refs'] : [];
+                $lid = trim((string) ($refsKnown['pricelabs_listing_id'] ?? ''));
+                if ($lid !== '') {
+                    $knownListingIds[$lid] = true;
+                }
+            }
+            $priceLabsBuildingIndex = null;
+            foreach ($buildings as $bIdx => $building) {
+                if (strtolower((string) ($building['name'] ?? '')) === 'pricelabs imported') {
+                    $priceLabsBuildingIndex = $bIdx;
+                    break;
+                }
+            }
+            if ($priceLabsBuildingIndex === null) {
+                $buildings[] = ['id' => 'bld_pricelabs', 'name' => 'PriceLabs Imported', 'apartments' => []];
+                $priceLabsBuildingIndex = count($buildings) - 1;
+            }
+            $addedApts = 0;
+            foreach ($plGlobalRows as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $lid = trim((string) ($row['listing_id'] ?? $row['property_id'] ?? $row['room_id'] ?? ''));
+                if ($lid === '' || isset($knownListingIds[$lid])) {
+                    continue;
+                }
+                $name = trim((string) ($row['listing_name'] ?? $row['property_name'] ?? $row['room_name'] ?? $row['unit_name'] ?? ('PriceLabs ' . $lid)));
+                $buildings[$priceLabsBuildingIndex]['apartments'][] = [
+                    'id' => 'plapt_' . md5($lid),
+                    'name' => $name,
+                    'airbnb_url' => '',
+                    'booking_url' => '',
+                    'external_refs' => ['pricelabs_listing_id' => $lid, 'pricelabs_name' => $name],
+                ];
+                $knownListingIds[$lid] = true;
+                $addedApts++;
+            }
+            if ($addedApts > 0) {
+                writeJson(BUILDINGS_FILE, $buildings);
+                $apartments = flattenApartments($buildings);
+                $status['PriceLabs auto-apartments'] = 'Added ' . $addedApts . ' apartment(s) from PriceLabs names.';
+            }
+        }
         foreach ($apartments as $apartment) {
             $refs = is_array($apartment['external_refs'] ?? null) ? $apartment['external_refs'] : [];
             $listingId = trim((string) ($refs['pricelabs_listing_id'] ?? ''));
