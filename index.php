@@ -1019,6 +1019,8 @@ $liveReservations = array_map(static function (array $r) use ($todayStr, $tomorr
         $r['status'] = 'checkout_tomorrow';
     } elseif ($start !== '' && $start <= $todayStr && $end > $todayStr) {
         $r['status'] = 'booked';
+    } elseif ($start !== '' && $start > $todayStr) {
+        $r['status'] = 'reserved';
     }
     if (str_contains($channel, 'airbnb')) {
         $r['booking_channel'] = 'airbnb';
@@ -1040,9 +1042,9 @@ $appData = [
     'reservationDocuments' => reservationDocumentsByIds(array_column($liveReservations, 'id')),
     'statusColors' => [
         'booked' => '#2dc26b',
-        'reserved' => '#2dc26b',
+        'reserved' => '#3498ff',
         'checked_out' => '#ef4444',
-        'checkout_tomorrow' => '#facc15',
+        'checkout_tomorrow' => '#f59e0b',
         'maintenance' => '#8b5cf6',
         'service' => '#8b5cf6',
     ],
