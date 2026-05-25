@@ -680,13 +680,13 @@ function runSync(array $buildings, array &$syncMeta): void
                     continue;
                 }
                 $rawStatus = strtolower(trim((string) ($row['status'] ?? $row['reservation_status'] ?? $row['booking_status'] ?? 'booked')));
-                $status = in_array($rawStatus, ['booked', 'reserved', 'blocked', 'cancelled', 'checkedout', 'checked_out'], true) ? $rawStatus : 'booked';
+                $statusValue = in_array($rawStatus, ['booked', 'reserved', 'blocked', 'cancelled', 'checkedout', 'checked_out'], true) ? $rawStatus : 'booked';
                 $plEvents[] = [
                     'id' => 'pl_' . md5($listingId . '|' . ($row['id'] ?? $row['reservation_id'] ?? $start . $end)),
                     'external_uid' => (string) ($row['id'] ?? $row['reservation_id'] ?? ''),
                     'apartment_id' => (string) ($apartment['id'] ?? ''),
                     'title' => (string) ($row['guest_name'] ?? $row['title'] ?? $apartment['name'] . ' PriceLabs booking'),
-                    'status' => $status,
+                    'status' => $statusValue,
                     'start' => $start,
                     'end' => $end,
                     'source' => 'pricelabs',
@@ -734,13 +734,13 @@ function runSync(array $buildings, array &$syncMeta): void
                         continue;
                     }
                     $rawStatus = strtolower(trim((string) ($row['status'] ?? $row['reservation_status'] ?? $row['booking_status'] ?? 'booked')));
-                    $status = in_array($rawStatus, ['booked', 'reserved', 'blocked', 'cancelled', 'checkedout', 'checked_out'], true) ? $rawStatus : 'booked';
+                    $statusValue = in_array($rawStatus, ['booked', 'reserved', 'blocked', 'cancelled', 'checkedout', 'checked_out'], true) ? $rawStatus : 'booked';
                     $plEvents[] = [
                         'id' => 'pl_' . md5($listingId . '|' . ($row['id'] ?? $row['reservation_id'] ?? $start . $end)),
                         'external_uid' => (string) ($row['id'] ?? $row['reservation_id'] ?? ''),
                         'apartment_id' => (string) ($apartment['id'] ?? ''),
                         'title' => (string) ($row['guest_name'] ?? $row['title'] ?? $apartment['name'] . ' PriceLabs booking'),
-                        'status' => $status,
+                        'status' => $statusValue,
                         'start' => $start,
                         'end' => $end,
                         'source' => 'pricelabs',
