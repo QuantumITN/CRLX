@@ -382,6 +382,8 @@ function runSync(array $buildings, array &$syncMeta, string $scopeType = 'all', 
     }
 
     if (!empty($plCfg['enabled']) && $plKey !== '') {
+        $fromDate = (new DateTimeImmutable('first day of last month', new DateTimeZone('UTC')))->format('Y-m-d');
+        $toDate = (new DateTimeImmutable('last day of next month', new DateTimeZone('UTC')))->format('Y-m-d');
         foreach ($targets as $apartment) {
             $refs = is_array($apartment['external_refs'] ?? null) ? $apartment['external_refs'] : [];
             $listingId = trim((string) ($refs['pricelabs_listing_id'] ?? ''));
@@ -389,11 +391,20 @@ function runSync(array $buildings, array &$syncMeta, string $scopeType = 'all', 
                 continue;
             }
             $plEvents = [];
-            foreach ([
-                '/v1/reservations?listing_id=' . rawurlencode($listingId),
-                '/v1/bookings?listing_id=' . rawurlencode($listingId),
-                '/v1/listings/' . rawurlencode($listingId) . '/reservations',
-            ] as $endpoint) {
+            $queryVariants = [
+                'listing_id=' . rawurlencode($listingId) . '&from=' . rawurlencode($fromDate) . '&to=' . rawurlencode($toDate),
+                'listing_id=' . rawurlencode($listingId) . '&start_date=' . rawurlencode($fromDate) . '&end_date=' . rawurlencode($toDate),
+                'listing_id=' . rawurlencode($listingId) . '&check_in_from=' . rawurlencode($fromDate) . '&check_out_to=' . rawurlencode($toDate),
+                'listing_id=' . rawurlencode($listingId),
+            ];
+            $endpoints = [];
+            foreach ($queryVariants as $q) {
+                $endpoints[] = '/v1/reservations?' . $q;
+                $endpoints[] = '/v1/bookings?' . $q;
+            }
+            $endpoints[] = '/v1/listings/' . rawurlencode($listingId) . '/reservations?from=' . rawurlencode($fromDate) . '&to=' . rawurlencode($toDate);
+            $endpoints[] = '/v1/listings/' . rawurlencode($listingId) . '/reservations';
+            foreach ($endpoints as $endpoint) {
                 $ctx = stream_context_create([
                     'http' => [
                         'method' => 'GET',
