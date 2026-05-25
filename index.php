@@ -580,12 +580,14 @@ function runSync(array $buildings, array &$syncMeta): void
     if (!empty($plCfg['enabled']) && $plKey !== '') {
         $fromDate = (new DateTimeImmutable('first day of last month', new DateTimeZone('UTC')))->format('Y-m-d');
         $toDate = (new DateTimeImmutable('last day of next month', new DateTimeZone('UTC')))->format('Y-m-d');
+        $plDebug = ['checked' => 0, 'rows' => 0, 'blocked_days' => 0];
         foreach ($apartments as $apartment) {
             $refs = is_array($apartment['external_refs'] ?? null) ? $apartment['external_refs'] : [];
             $listingId = trim((string) ($refs['pricelabs_listing_id'] ?? ''));
             if ($listingId === '') {
                 continue;
             }
+            $plDebug['checked']++;
             $plEvents = [];
             $queryVariants = [
                 'listing_id=' . rawurlencode($listingId) . '&from=' . rawurlencode($fromDate) . '&to=' . rawurlencode($toDate),
@@ -637,9 +639,49 @@ function runSync(array $buildings, array &$syncMeta): void
                 }
                 break;
             }
+            if ($plEvents === []) {
+                foreach ([
+                    '/v1/listings/' . rawurlencode($listingId),
+                    '/v1/listing_data/' . rawurlencode($listingId),
+                ] as $fallbackEndpoint) {
+                    $ctx = stream_context_create(['http' => ['method' => 'GET', 'timeout' => 30, 'header' => "Accept: application/json\r\nx-api-key: {$plKey}\r\nAuthorization: Bearer {$plKey}\r\nUser-Agent: CRLX-PriceLabs-Bridge/1.0"]]);
+                    $raw = @file_get_contents($plBase . $fallbackEndpoint, false, $ctx);
+                    $json = is_string($raw) ? json_decode($raw, true) : null;
+                    if (!is_array($json)) {
+                        continue;
+                    }
+                    $blocked = $json['blocked_dates'] ?? $json['unavailable_dates'] ?? $json['calendar']['blocked_dates'] ?? null;
+                    if (!is_array($blocked)) {
+                        continue;
+                    }
+                    foreach ($blocked as $date) {
+                        $d = substr((string) $date, 0, 10);
+                        if ($d === '') {
+                            continue;
+                        }
+                        $end = (new DateTimeImmutable($d, new DateTimeZone('UTC')))->modify('+1 day')->format('Y-m-d');
+                        $plEvents[] = [
+                            'id' => 'pl_block_' . md5($listingId . '|' . $d),
+                            'external_uid' => 'blocked_' . $d,
+                            'apartment_id' => (string) ($apartment['id'] ?? ''),
+                            'title' => (string) (($apartment['name'] ?? 'Apartment') . ' Blocked (PriceLabs)'),
+                            'status' => 'blocked',
+                            'start' => $d,
+                            'end' => $end,
+                            'source' => 'pricelabs',
+                            'price_total' => null,
+                            'price_currency' => 'EUR',
+                        ];
+                        $plDebug['blocked_days']++;
+                    }
+                    break;
+                }
+            }
             $ical = array_merge($ical, $plEvents);
+            $plDebug['rows'] += count($plEvents);
             $status[$apartment['name'] . ' (PriceLabs)'] = 'Imported ' . count($plEvents) . ' reservation(s)';
         }
+        $status['PriceLabs debug'] = 'Checked ' . (int) $plDebug['checked'] . ' mapped listing(s), imported ' . (int) $plDebug['rows'] . ' row(s), blocked-days fallback ' . (int) $plDebug['blocked_days'] . '.';
     }
 
     $pdo = getDbPdo();
