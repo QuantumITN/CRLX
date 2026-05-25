@@ -468,6 +468,8 @@ function runSync(array $buildings, array &$syncMeta): void
     $plCfg = is_array($settings['pricelabs'] ?? null) ? $settings['pricelabs'] : [];
     $plKey = trim((string) ($plCfg['api_key'] ?? ''));
     $plBase = rtrim(trim((string) ($plCfg['base_url'] ?? 'https://api.pricelabs.co')), '/');
+    $plPms = strtolower(trim((string) ($plCfg['pms'] ?? 'airbnb')));
+    $pmsCandidates = array_values(array_unique(array_filter([$plPms, 'airbnb', 'igms', 'booking', 'expedia'])));
     $normalizeName = static function (string $name): string {
         $name = strtolower(trim($name));
         $name = preg_replace('/[^a-z0-9]+/', ' ', $name) ?? $name;
@@ -582,21 +584,26 @@ function runSync(array $buildings, array &$syncMeta): void
         $toDate = (new DateTimeImmutable('last day of next month', new DateTimeZone('UTC')))->format('Y-m-d');
         $plDebug = ['checked' => 0, 'rows' => 0, 'blocked_days' => 0];
         $plGlobalRows = [];
-        for ($offset = 0; $offset <= 1000; $offset += 100) {
-            $endpoint = '/v1/reservation_data?pms=igms&start_date=' . rawurlencode($fromDate) . '&end_date=' . rawurlencode($toDate) . '&limit=100&offset=' . $offset;
-            $ctx = stream_context_create(['http' => ['method' => 'GET', 'timeout' => 30, 'header' => "Accept: application/json\r\nx-api-key: {$plKey}\r\nAuthorization: Bearer {$plKey}\r\nUser-Agent: CRLX-PriceLabs-Bridge/1.0"]]);
-            $raw = @file_get_contents($plBase . $endpoint, false, $ctx);
-            $json = is_string($raw) ? json_decode($raw, true) : null;
-            if (!is_array($json)) {
-                break;
+        foreach ($pmsCandidates as $pms) {
+            for ($offset = 0; $offset <= 1000; $offset += 100) {
+                $endpoint = '/v1/reservation_data?pms=' . rawurlencode($pms) . '&start_date=' . rawurlencode($fromDate) . '&end_date=' . rawurlencode($toDate) . '&limit=100&offset=' . $offset;
+                $ctx = stream_context_create(['http' => ['method' => 'GET', 'timeout' => 30, 'header' => "Accept: application/json\r\nx-api-key: {$plKey}\r\nAuthorization: Bearer {$plKey}\r\nUser-Agent: CRLX-PriceLabs-Bridge/1.0"]]);
+                $raw = @file_get_contents($plBase . $endpoint, false, $ctx);
+                $json = is_string($raw) ? json_decode($raw, true) : null;
+                if (!is_array($json)) {
+                    break;
+                }
+                $rows = $extractRows($json);
+                if (!is_array($rows) || $rows === []) {
+                    break;
+                }
+                $plGlobalRows = array_merge($plGlobalRows, $rows);
+                $nextPage = $json['next_page'] ?? $json['has_more'] ?? false;
+                if (!$nextPage) {
+                    break;
+                }
             }
-            $rows = $extractRows($json);
-            if (!is_array($rows) || $rows === []) {
-                break;
-            }
-            $plGlobalRows = array_merge($plGlobalRows, $rows);
-            $nextPage = $json['next_page'] ?? $json['has_more'] ?? false;
-            if (!$nextPage) {
+            if ($plGlobalRows !== []) {
                 break;
             }
         }

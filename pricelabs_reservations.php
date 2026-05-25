@@ -22,6 +22,8 @@ $settings = readJsonLocal(__DIR__ . '/data/settings.json', []);
 $pl = is_array($settings['pricelabs'] ?? null) ? $settings['pricelabs'] : [];
 $apiKey = trim((string) ($pl['api_key'] ?? ''));
 $baseUrl = rtrim(trim((string) ($pl['base_url'] ?? 'https://api.pricelabs.co')), '/');
+$pms = strtolower(trim((string) ($pl['pms'] ?? 'airbnb')));
+$pmsCandidates = array_values(array_unique(array_filter([$pms, 'airbnb', 'igms', 'booking', 'expedia'])));
 
 $fromDate = (new DateTimeImmutable('first day of last month', new DateTimeZone('UTC')))->format('Y-m-d');
 $toDate = (new DateTimeImmutable('last day of next month', new DateTimeZone('UTC')))->format('Y-m-d');
@@ -32,27 +34,33 @@ $pagesFetched = 0;
 if ($apiKey === '') {
     $error = 'PriceLabs API key is not configured in Settings.';
 } else {
-    for ($offset = 0; $offset <= 2000; $offset += 100) {
-        $url = $baseUrl . '/v1/reservation_data?pms=igms&start_date=' . rawurlencode($fromDate) . '&end_date=' . rawurlencode($toDate) . '&limit=100&offset=' . $offset;
-        $ctx = stream_context_create(['http' => ['method' => 'GET', 'timeout' => 30, 'header' => "Accept: application/json\r\nx-api-key: {$apiKey}\r\nAuthorization: Bearer {$apiKey}\r\nUser-Agent: CRLX-PriceLabs-Viewer/1.0"]]);
-        $raw = @file_get_contents($url, false, $ctx);
-        $json = is_string($raw) ? json_decode($raw, true) : null;
-        if (!is_array($json)) {
-            $error = 'Could not decode PriceLabs reservation_data response.';
-            break;
-        }
-        $pageRows = $json['data'] ?? $json['reservations'] ?? $json['results'] ?? $json;
-        if (!is_array($pageRows) || $pageRows === []) {
-            break;
-        }
-        $pagesFetched++;
-        foreach ($pageRows as $r) {
-            if (is_array($r)) {
-                $rows[] = $r;
+    foreach ($pmsCandidates as $pmsTry) {
+        for ($offset = 0; $offset <= 2000; $offset += 100) {
+            $url = $baseUrl . '/v1/reservation_data?pms=' . rawurlencode($pmsTry) . '&start_date=' . rawurlencode($fromDate) . '&end_date=' . rawurlencode($toDate) . '&limit=100&offset=' . $offset;
+            $ctx = stream_context_create(['http' => ['method' => 'GET', 'timeout' => 30, 'header' => "Accept: application/json\r\nx-api-key: {$apiKey}\r\nAuthorization: Bearer {$apiKey}\r\nUser-Agent: CRLX-PriceLabs-Viewer/1.0"]]);
+            $raw = @file_get_contents($url, false, $ctx);
+            $json = is_string($raw) ? json_decode($raw, true) : null;
+            if (!is_array($json)) {
+                $error = 'Could not decode PriceLabs reservation_data response.';
+                break;
+            }
+            $pageRows = $json['data'] ?? $json['reservations'] ?? $json['results'] ?? $json;
+            if (!is_array($pageRows) || $pageRows === []) {
+                break;
+            }
+            $pagesFetched++;
+            foreach ($pageRows as $r) {
+                if (is_array($r)) {
+                    $rows[] = $r;
+                }
+            }
+            $nextPage = $json['next_page'] ?? $json['has_more'] ?? false;
+            if (!$nextPage) {
+                break;
             }
         }
-        $nextPage = $json['next_page'] ?? $json['has_more'] ?? false;
-        if (!$nextPage) {
+        if ($rows !== []) {
+            $pms = $pmsTry;
             break;
         }
     }
@@ -71,7 +79,7 @@ if ($apiKey === '') {
 <main class="container page-with-header">
     <section class="panel">
         <h2>PriceLabs reservation_data feed</h2>
-        <p class="tiny">Range: <?= htmlspecialchars($fromDate, ENT_QUOTES, 'UTF-8') ?> → <?= htmlspecialchars($toDate, ENT_QUOTES, 'UTF-8') ?> (pms=igms)</p>
+        <p class="tiny">Range: <?= htmlspecialchars($fromDate, ENT_QUOTES, 'UTF-8') ?> → <?= htmlspecialchars($toDate, ENT_QUOTES, 'UTF-8') ?> (pms=<?= htmlspecialchars($pms, ENT_QUOTES, 'UTF-8') ?>)</p>
         <p class="tiny">Pages fetched: <?= (int) $pagesFetched ?> | Rows: <?= count($rows) ?></p>
         <?php if ($error !== ''): ?>
             <div class="flash error"><?= htmlspecialchars($error, ENT_QUOTES, 'UTF-8') ?></div>
@@ -112,4 +120,3 @@ if ($apiKey === '') {
 </main>
 </body>
 </html>
-

@@ -281,7 +281,7 @@ $settings = readJson(SETTINGS_FILE, [
         'airbnb' => ['api_url' => '', 'token' => '', 'enabled' => false],
         'booking' => ['api_url' => '', 'token' => '', 'enabled' => false],
     ],
-    'pricelabs' => ['api_key' => '', 'base_url' => 'https://api.pricelabs.co', 'enabled' => false],
+    'pricelabs' => ['api_key' => '', 'base_url' => 'https://api.pricelabs.co', 'pms' => 'airbnb', 'enabled' => false],
 ]);
 
 if (!isset($settings['provider_connectors']) || !is_array($settings['provider_connectors'])) {
@@ -291,7 +291,10 @@ if (!isset($settings['provider_connectors']) || !is_array($settings['provider_co
     ];
 }
 if (!isset($settings['pricelabs']) || !is_array($settings['pricelabs'])) {
-    $settings['pricelabs'] = ['api_key' => '', 'base_url' => 'https://api.pricelabs.co', 'enabled' => false];
+    $settings['pricelabs'] = ['api_key' => '', 'base_url' => 'https://api.pricelabs.co', 'pms' => 'airbnb', 'enabled' => false];
+}
+if (!isset($settings['pricelabs']['pms']) || trim((string) $settings['pricelabs']['pms']) === '') {
+    $settings['pricelabs']['pms'] = 'airbnb';
 }
 
 $buildings = readJson(BUILDINGS_FILE, []);
@@ -457,21 +460,26 @@ function syncPricelabsReservations(array $buildings, array $cfg): array
     $fromDate = (new DateTimeImmutable('first day of last month', new DateTimeZone('UTC')))->format('Y-m-d');
     $toDate = (new DateTimeImmutable('last day of next month', new DateTimeZone('UTC')))->format('Y-m-d');
     $globalRows = [];
-    for ($offset = 0; $offset <= 1000; $offset += 100) {
-        $endpoint = '/v1/reservation_data?pms=igms&start_date=' . rawurlencode($fromDate) . '&end_date=' . rawurlencode($toDate) . '&limit=100&offset=' . $offset;
-        $ctx = stream_context_create(['http' => ['method' => 'GET', 'timeout' => 30, 'header' => "Accept: application/json\r\nx-api-key: {$apiKey}\r\nAuthorization: Bearer {$apiKey}\r\nUser-Agent: CRLX-PriceLabs-Bridge/1.0"]]);
-        $raw = @file_get_contents($baseUrl . $endpoint, false, $ctx);
-        $json = is_string($raw) ? json_decode($raw, true) : null;
-        if (!is_array($json)) {
-            break;
+    foreach ($pmsCandidates as $pms) {
+        for ($offset = 0; $offset <= 1000; $offset += 100) {
+            $endpoint = '/v1/reservation_data?pms=' . rawurlencode($pms) . '&start_date=' . rawurlencode($fromDate) . '&end_date=' . rawurlencode($toDate) . '&limit=100&offset=' . $offset;
+            $ctx = stream_context_create(['http' => ['method' => 'GET', 'timeout' => 30, 'header' => "Accept: application/json\r\nx-api-key: {$apiKey}\r\nAuthorization: Bearer {$apiKey}\r\nUser-Agent: CRLX-PriceLabs-Bridge/1.0"]]);
+            $raw = @file_get_contents($baseUrl . $endpoint, false, $ctx);
+            $json = is_string($raw) ? json_decode($raw, true) : null;
+            if (!is_array($json)) {
+                break;
+            }
+            $rows = $extractRows($json);
+            if (!is_array($rows) || $rows === []) {
+                break;
+            }
+            $globalRows = array_merge($globalRows, $rows);
+            $nextPage = $json['next_page'] ?? $json['has_more'] ?? false;
+            if (!$nextPage) {
+                break;
+            }
         }
-        $rows = $extractRows($json);
-        if (!is_array($rows) || $rows === []) {
-            break;
-        }
-        $globalRows = array_merge($globalRows, $rows);
-        $nextPage = $json['next_page'] ?? $json['has_more'] ?? false;
-        if (!$nextPage) {
+        if ($globalRows !== []) {
             break;
         }
     }
@@ -659,6 +667,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $settings['pricelabs'] = [
             'api_key' => trim((string) ($_POST['pricelabs_api_key'] ?? '')),
             'base_url' => trim((string) ($_POST['pricelabs_base_url'] ?? 'https://api.pricelabs.co')),
+            'pms' => trim((string) ($_POST['pricelabs_pms'] ?? 'airbnb')),
             'enabled' => isset($_POST['pricelabs_enabled']),
         ];
 
@@ -779,6 +788,7 @@ $connectors = $settings['provider_connectors'];
                 <h3>PriceLabs Bridge</h3>
                 <label><input type="checkbox" name="pricelabs_enabled" <?= !empty($settings['pricelabs']['enabled']) ? 'checked' : '' ?>> Enabled</label>
                 <input type="url" name="pricelabs_base_url" value="<?= htmlspecialchars((string) ($settings['pricelabs']['base_url'] ?? 'https://api.pricelabs.co'), ENT_QUOTES, 'UTF-8') ?>" placeholder="https://api.pricelabs.co">
+                <input type="text" name="pricelabs_pms" value="<?= htmlspecialchars((string) ($settings['pricelabs']['pms'] ?? 'airbnb'), ENT_QUOTES, 'UTF-8') ?>" placeholder="PMS key (e.g. airbnb, igms)">
                 <input type="text" name="pricelabs_api_key" value="<?= htmlspecialchars((string) ($settings['pricelabs']['api_key'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="PriceLabs API key">
             </article>
 
@@ -868,3 +878,5 @@ $connectors = $settings['provider_connectors'];
 </main>
 </body>
 </html>
+    $pmsValue = strtolower(trim((string) ($cfg['pms'] ?? 'airbnb')));
+    $pmsCandidates = array_values(array_unique(array_filter([$pmsValue, 'airbnb', 'igms', 'booking', 'expedia'])));
