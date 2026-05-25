@@ -417,6 +417,19 @@ function matchPricelabsListings(array $plListings, array &$buildings): int
 
 function syncPricelabsReservations(array $buildings, array $cfg): array
 {
+    $mapPriceLabsChannel = static function (array $row): string {
+        $raw = strtolower(trim((string) ($row['pms'] ?? $row['channel'] ?? $row['source'] ?? $row['ota'] ?? '')));
+        if (str_contains($raw, 'airbnb')) {
+            return 'airbnb';
+        }
+        if (str_contains($raw, 'booking')) {
+            return 'booking';
+        }
+        if (str_contains($raw, 'expedia')) {
+            return 'expedia';
+        }
+        return 'pricelabs';
+    };
     $extractRows = static function (array $json): array {
         $candidates = [
             $json['reservations'] ?? null,
@@ -517,6 +530,7 @@ function syncPricelabsReservations(array $buildings, array $cfg): array
                     'apartment_id' => (string) ($apartment['id'] ?? ''),
                     'title' => (string) ($row['guest_name'] ?? $row['title'] ?? ((string) ($apartment['name'] ?? 'PriceLabs booking'))),
                     'status' => $status,
+                    'source' => $mapPriceLabsChannel($row),
                     'start' => $start,
                     'end' => $end,
                     'price_total' => ((string) ($row['price_total'] ?? $row['amount'] ?? $row['rental_revenue'] ?? '') === '' ? null : (float) ($row['price_total'] ?? $row['amount'] ?? $row['rental_revenue'])),
@@ -570,6 +584,7 @@ function syncPricelabsReservations(array $buildings, array $cfg): array
                         'apartment_id' => (string) ($apartment['id'] ?? ''),
                         'title' => (string) ($row['guest_name'] ?? $row['title'] ?? ((string) ($apartment['name'] ?? 'PriceLabs booking'))),
                         'status' => $status,
+                        'source' => $mapPriceLabsChannel($row),
                         'start' => $start,
                         'end' => $end,
                         'price_total' => ((string) ($row['price_total'] ?? $row['amount'] ?? '') === '' ? null : (float) ($row['price_total'] ?? $row['amount'])),
@@ -610,6 +625,7 @@ function syncPricelabsReservations(array $buildings, array $cfg): array
                             'apartment_id' => (string) ($apartment['id'] ?? ''),
                             'title' => (string) (($apartment['name'] ?? 'Apartment') . ' Blocked (PriceLabs)'),
                             'status' => 'blocked',
+                            'source' => 'blocked',
                             'start' => $d,
                             'end' => $end,
                             'price_total' => null,
@@ -636,7 +652,7 @@ function syncPricelabsReservations(array $buildings, array $cfg): array
                 ':status' => (string) $r['status'],
                 ':start' => (string) $r['start'],
                 ':end' => (string) $r['end'],
-                ':channel' => 'pricelabs',
+                ':channel' => (string) ($r['source'] ?? 'pricelabs'),
                 ':price_total' => $r['price_total'],
                 ':currency' => (string) $r['price_currency'],
             ]);

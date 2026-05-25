@@ -437,6 +437,19 @@ function buildExportIcs(array $reservations): string
 
 function runSync(array $buildings, array &$syncMeta): void
 {
+    $mapPriceLabsChannel = static function (array $row): string {
+        $raw = strtolower(trim((string) ($row['pms'] ?? $row['channel'] ?? $row['source'] ?? $row['ota'] ?? '')));
+        if (str_contains($raw, 'airbnb')) {
+            return 'airbnb';
+        }
+        if (str_contains($raw, 'booking')) {
+            return 'booking';
+        }
+        if (str_contains($raw, 'expedia')) {
+            return 'expedia';
+        }
+        return 'pricelabs';
+    };
     $extractRows = static function (array $json): array {
         $candidates = [
             $json['reservations'] ?? null,
@@ -692,7 +705,7 @@ function runSync(array $buildings, array &$syncMeta): void
                     'status' => $statusValue,
                     'start' => $start,
                     'end' => $end,
-                    'source' => 'pricelabs',
+                    'source' => $mapPriceLabsChannel($row),
                     'price_total' => ((string) ($row['price_total'] ?? $row['amount'] ?? $row['rental_revenue'] ?? '') === '' ? null : (float) ($row['price_total'] ?? $row['amount'] ?? $row['rental_revenue'])),
                     'price_currency' => (string) ($row['currency'] ?? 'EUR'),
                 ];
@@ -746,7 +759,7 @@ function runSync(array $buildings, array &$syncMeta): void
                         'status' => $statusValue,
                         'start' => $start,
                         'end' => $end,
-                        'source' => 'pricelabs',
+                        'source' => $mapPriceLabsChannel($row),
                         'price_total' => ((string) ($row['price_total'] ?? $row['amount'] ?? '') === '' ? null : (float) ($row['price_total'] ?? $row['amount'])),
                         'price_currency' => (string) ($row['currency'] ?? 'EUR'),
                     ];
@@ -782,7 +795,7 @@ function runSync(array $buildings, array &$syncMeta): void
                             'status' => 'blocked',
                             'start' => $d,
                             'end' => $end,
-                            'source' => 'pricelabs',
+                            'source' => 'blocked',
                             'price_total' => null,
                             'price_currency' => 'EUR',
                         ];
