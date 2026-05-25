@@ -180,6 +180,7 @@ function renderSiteHeader(string $pageTitle = 'CLR Calendar'): void
                     <a class="btn ghost" href="reports.php">Reports</a>
                     <a class="btn ghost" href="accounting.php">Accounting</a>
                     <a class="btn ghost" href="file_sharing.php">File sharing</a>
+                    <a class="btn ghost" href="pricelabs_reservations.php">PriceLabs Data</a>
                     <a class="btn ghost" href="settings.php">Settings</a>
                     <a class="btn ghost" href="healthcheck.php">Health</a>
                     <details class="notif-wrap">
