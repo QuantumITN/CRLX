@@ -259,7 +259,17 @@
       bar.style.width = `${len * dayWidth - 4}px`;
       bar.style.background = statusColors[r.status] || '#64748b';
       const sourceRaw = String(r.booking_channel || r.source || 'manual').toLowerCase();
-      const sourceKey = sourceRaw.includes('booking') ? 'booking' : (sourceRaw.includes('airbnb') ? 'airbnb' : sourceRaw);
+      let sourceKey = sourceRaw.includes('booking') ? 'booking' : (sourceRaw.includes('airbnb') ? 'airbnb' : sourceRaw);
+      if (sourceKey === 'pricelabs') {
+        const titleRaw = String(r.title || '').toLowerCase();
+        if (titleRaw.includes('booking')) {
+          sourceKey = 'booking';
+        } else if (titleRaw.includes('airbnb')) {
+          sourceKey = 'airbnb';
+        } else {
+          sourceKey = '';
+        }
+      }
       const sourceColor = sourceColors[sourceKey] || '#475569';
 
       const content = document.createElement('span');
@@ -274,7 +284,9 @@
       text.className = 'bar-text';
       text.textContent = `${(r.title || r.status || 'reservation').toUpperCase()} (${r.start} → ${r.end})`;
 
-      content.appendChild(sourceChip);
+      if (sourceKey !== '') {
+        content.appendChild(sourceChip);
+      }
       content.appendChild(text);
       bar.appendChild(content);
       bar.addEventListener('click', () => {
