@@ -581,6 +581,25 @@ function runSync(array $buildings, array &$syncMeta): void
         $fromDate = (new DateTimeImmutable('first day of last month', new DateTimeZone('UTC')))->format('Y-m-d');
         $toDate = (new DateTimeImmutable('last day of next month', new DateTimeZone('UTC')))->format('Y-m-d');
         $plDebug = ['checked' => 0, 'rows' => 0, 'blocked_days' => 0];
+        $plGlobalRows = [];
+        for ($offset = 0; $offset <= 1000; $offset += 100) {
+            $endpoint = '/v1/reservation_data?pms=igms&start_date=' . rawurlencode($fromDate) . '&end_date=' . rawurlencode($toDate) . '&limit=100&offset=' . $offset;
+            $ctx = stream_context_create(['http' => ['method' => 'GET', 'timeout' => 30, 'header' => "Accept: application/json\r\nx-api-key: {$plKey}\r\nAuthorization: Bearer {$plKey}\r\nUser-Agent: CRLX-PriceLabs-Bridge/1.0"]]);
+            $raw = @file_get_contents($plBase . $endpoint, false, $ctx);
+            $json = is_string($raw) ? json_decode($raw, true) : null;
+            if (!is_array($json)) {
+                break;
+            }
+            $rows = $extractRows($json);
+            if (!is_array($rows) || $rows === []) {
+                break;
+            }
+            $plGlobalRows = array_merge($plGlobalRows, $rows);
+            $nextPage = $json['next_page'] ?? $json['has_more'] ?? false;
+            if (!$nextPage) {
+                break;
+            }
+        }
         foreach ($apartments as $apartment) {
             $refs = is_array($apartment['external_refs'] ?? null) ? $apartment['external_refs'] : [];
             $listingId = trim((string) ($refs['pricelabs_listing_id'] ?? ''));
@@ -589,6 +608,45 @@ function runSync(array $buildings, array &$syncMeta): void
             }
             $plDebug['checked']++;
             $plEvents = [];
+            foreach ($plGlobalRows as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $rowListingId = trim((string) ($row['listing_id'] ?? $row['property_id'] ?? $row['room_id'] ?? ''));
+                $rowListingName = strtolower(trim((string) ($row['listing_name'] ?? $row['property_name'] ?? $row['room_name'] ?? $row['unit_name'] ?? '')));
+                $aptName = strtolower(trim((string) ($apartment['name'] ?? '')));
+                if ($rowListingId !== '' && $rowListingId !== $listingId) {
+                    continue;
+                }
+                if ($rowListingId === '' && $rowListingName !== '' && $aptName !== '' && !str_contains($rowListingName, $aptName) && !str_contains($aptName, $rowListingName)) {
+                    continue;
+                }
+                $start = $pickDate($row, ['check_in', 'checkin', 'start_date', 'arrival_date', 'from_date', 'date_from']);
+                $end = $pickDate($row, ['check_out', 'checkout', 'end_date', 'departure_date', 'to_date', 'date_to']);
+                if ($start === '' || $end === '') {
+                    continue;
+                }
+                $rawStatus = strtolower(trim((string) ($row['status'] ?? $row['reservation_status'] ?? $row['booking_status'] ?? 'booked')));
+                $status = in_array($rawStatus, ['booked', 'reserved', 'blocked', 'cancelled', 'checkedout', 'checked_out'], true) ? $rawStatus : 'booked';
+                $plEvents[] = [
+                    'id' => 'pl_' . md5($listingId . '|' . ($row['id'] ?? $row['reservation_id'] ?? $start . $end)),
+                    'external_uid' => (string) ($row['id'] ?? $row['reservation_id'] ?? ''),
+                    'apartment_id' => (string) ($apartment['id'] ?? ''),
+                    'title' => (string) ($row['guest_name'] ?? $row['title'] ?? $apartment['name'] . ' PriceLabs booking'),
+                    'status' => $status,
+                    'start' => $start,
+                    'end' => $end,
+                    'source' => 'pricelabs',
+                    'price_total' => ((string) ($row['price_total'] ?? $row['amount'] ?? $row['rental_revenue'] ?? '') === '' ? null : (float) ($row['price_total'] ?? $row['amount'] ?? $row['rental_revenue'])),
+                    'price_currency' => (string) ($row['currency'] ?? 'EUR'),
+                ];
+            }
+            if ($plEvents !== []) {
+                $ical = array_merge($ical, $plEvents);
+                $plDebug['rows'] += count($plEvents);
+                $status[$apartment['name'] . ' (PriceLabs reservation_data)'] = 'Imported ' . count($plEvents) . ' reservation(s)';
+                continue;
+            }
             $queryVariants = [
                 'listing_id=' . rawurlencode($listingId) . '&from=' . rawurlencode($fromDate) . '&to=' . rawurlencode($toDate),
                 'listing_id=' . rawurlencode($listingId) . '&start_date=' . rawurlencode($fromDate) . '&end_date=' . rawurlencode($toDate),

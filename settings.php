@@ -456,11 +456,65 @@ function syncPricelabsReservations(array $buildings, array $cfg): array
     $debug = ['listings_checked' => 0, 'endpoints_with_rows' => 0];
     $fromDate = (new DateTimeImmutable('first day of last month', new DateTimeZone('UTC')))->format('Y-m-d');
     $toDate = (new DateTimeImmutable('last day of next month', new DateTimeZone('UTC')))->format('Y-m-d');
+    $globalRows = [];
+    for ($offset = 0; $offset <= 1000; $offset += 100) {
+        $endpoint = '/v1/reservation_data?pms=igms&start_date=' . rawurlencode($fromDate) . '&end_date=' . rawurlencode($toDate) . '&limit=100&offset=' . $offset;
+        $ctx = stream_context_create(['http' => ['method' => 'GET', 'timeout' => 30, 'header' => "Accept: application/json\r\nx-api-key: {$apiKey}\r\nAuthorization: Bearer {$apiKey}\r\nUser-Agent: CRLX-PriceLabs-Bridge/1.0"]]);
+        $raw = @file_get_contents($baseUrl . $endpoint, false, $ctx);
+        $json = is_string($raw) ? json_decode($raw, true) : null;
+        if (!is_array($json)) {
+            break;
+        }
+        $rows = $extractRows($json);
+        if (!is_array($rows) || $rows === []) {
+            break;
+        }
+        $globalRows = array_merge($globalRows, $rows);
+        $nextPage = $json['next_page'] ?? $json['has_more'] ?? false;
+        if (!$nextPage) {
+            break;
+        }
+    }
     foreach ($buildings as $building) {
         foreach (($building['apartments'] ?? []) as $apartment) {
             $refs = is_array($apartment['external_refs'] ?? null) ? $apartment['external_refs'] : [];
             $listingId = trim((string) ($refs['pricelabs_listing_id'] ?? ''));
             if ($listingId === '') {
+                continue;
+            }
+            foreach ($globalRows as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $rowListingId = trim((string) ($row['listing_id'] ?? $row['property_id'] ?? $row['room_id'] ?? ''));
+                $rowListingName = strtolower(trim((string) ($row['listing_name'] ?? $row['property_name'] ?? $row['room_name'] ?? $row['unit_name'] ?? '')));
+                $aptName = strtolower(trim((string) ($apartment['name'] ?? '')));
+                if ($rowListingId !== '' && $rowListingId !== $listingId) {
+                    continue;
+                }
+                if ($rowListingId === '' && $rowListingName !== '' && $aptName !== '' && !str_contains($rowListingName, $aptName) && !str_contains($aptName, $rowListingName)) {
+                    continue;
+                }
+                $start = $pickDate($row, ['check_in', 'checkin', 'start_date', 'arrival_date', 'from_date', 'date_from']);
+                $end = $pickDate($row, ['check_out', 'checkout', 'end_date', 'departure_date', 'to_date', 'date_to']);
+                if ($start === '' || $end === '') {
+                    continue;
+                }
+                $rawStatus = strtolower(trim((string) ($row['status'] ?? $row['reservation_status'] ?? $row['booking_status'] ?? 'booked')));
+                $status = in_array($rawStatus, ['booked', 'reserved', 'blocked', 'cancelled', 'checkedout', 'checked_out'], true) ? $rawStatus : 'booked';
+                $rowsToInsert[] = [
+                    'id' => 'pl_' . md5($listingId . '|' . ($row['id'] ?? $row['reservation_id'] ?? $start . $end)),
+                    'external_uid' => (string) ($row['id'] ?? $row['reservation_id'] ?? ''),
+                    'apartment_id' => (string) ($apartment['id'] ?? ''),
+                    'title' => (string) ($row['guest_name'] ?? $row['title'] ?? ((string) ($apartment['name'] ?? 'PriceLabs booking'))),
+                    'status' => $status,
+                    'start' => $start,
+                    'end' => $end,
+                    'price_total' => ((string) ($row['price_total'] ?? $row['amount'] ?? $row['rental_revenue'] ?? '') === '' ? null : (float) ($row['price_total'] ?? $row['amount'] ?? $row['rental_revenue'])),
+                    'price_currency' => (string) ($row['currency'] ?? 'EUR'),
+                ];
+            }
+            if (!empty(array_filter($rowsToInsert, static fn(array $r): bool => (string) ($r['apartment_id'] ?? '') === (string) ($apartment['id'] ?? '')))) {
                 continue;
             }
             $queryVariants = [
