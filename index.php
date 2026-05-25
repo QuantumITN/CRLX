@@ -618,13 +618,15 @@ function runSync(array $buildings, array &$syncMeta): void
             }
             $priceLabsBuildingIndex = null;
             foreach ($buildings as $bIdx => $building) {
-                if (strtolower((string) ($building['name'] ?? '')) === 'pricelabs imported') {
+                $bName = strtolower((string) ($building['name'] ?? ''));
+                if ($bName === 'pricelabs imported' || $bName === 'live imported') {
                     $priceLabsBuildingIndex = $bIdx;
+                    $buildings[$bIdx]['name'] = 'Live Imported';
                     break;
                 }
             }
             if ($priceLabsBuildingIndex === null) {
-                $buildings[] = ['id' => 'bld_pricelabs', 'name' => 'PriceLabs Imported', 'apartments' => []];
+                $buildings[] = ['id' => 'bld_pricelabs', 'name' => 'Live Imported', 'apartments' => []];
                 $priceLabsBuildingIndex = count($buildings) - 1;
             }
             $addedApts = 0;
@@ -977,15 +979,24 @@ if (!$monthStart) {
 $monthStart = $monthStart->setDate((int) $monthStart->format('Y'), (int) $monthStart->format('m'), 1);
 $prevMonth = $monthStart->modify('-1 month');
 $nextMonth = $monthStart->modify('+1 month');
+$liveApartments = array_values(array_filter(flattenApartments($buildings), static function (array $a): bool {
+    $refs = is_array($a['external_refs'] ?? null) ? $a['external_refs'] : [];
+    return trim((string) ($refs['pricelabs_listing_id'] ?? '')) !== '';
+}));
+$liveApartmentIds = array_column($liveApartments, 'id');
+$liveReservations = array_values(array_filter($reservations, static function (array $r) use ($liveApartmentIds): bool {
+    return in_array((string) ($r['apartment_id'] ?? ''), $liveApartmentIds, true)
+        && strtolower((string) ($r['booking_channel'] ?? '')) === 'pricelabs';
+}));
 $appData = [
-    'apartments' => flattenApartments($buildings),
-    'manualReservations' => array_values(array_filter($reservations, static fn(array $r): bool => ($r['source'] ?? '') === 'manual')),
-    'icalReservations' => array_values(array_filter($reservations, static fn(array $r): bool => ($r['source'] ?? '') !== 'manual')),
+    'apartments' => $liveApartments,
+    'manualReservations' => [],
+    'icalReservations' => $liveReservations,
     'monthStart' => $monthStart->format('Y-m-d'),
     'monthDays' => (int) $monthStart->format('t'),
     'monthLabel' => $monthStart->format('F Y'),
     'openReservationId' => trim((string) ($_GET['open_reservation'] ?? '')),
-    'reservationDocuments' => reservationDocumentsByIds(array_column($reservations, 'id')),
+    'reservationDocuments' => reservationDocumentsByIds(array_column($liveReservations, 'id')),
     'statusColors' => [
         'booked' => '#2dc26b',
         'reserved' => '#3498ff',
