@@ -848,6 +848,7 @@ function runSync(array $buildings, array &$syncMeta, ?DateTimeImmutable $anchorM
     }
 
     $syncMeta['last_sync'] = gmdate('c');
+    $syncMeta['anchor_month'] = ($anchorMonth ?: new DateTimeImmutable('first day of this month', new DateTimeZone('UTC')))->format('Y-m');
     $syncMeta['status'] = $status;
     file_put_contents(SYNC_META_FILE, json_encode($syncMeta, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 }
@@ -979,9 +980,10 @@ if (!$monthStart) {
 $monthStart = $monthStart->setDate((int) $monthStart->format('Y'), (int) $monthStart->format('m'), 1);
 $interval = (int) ($settings['sync_interval_minutes'] ?? 30);
 $lastSyncTs = isset($syncMeta['last_sync']) ? strtotime((string) $syncMeta['last_sync']) : false;
-if ($lastSyncTs === false || (time() - $lastSyncTs) >= ($interval * 60)) {
+$anchorChanged = ((string) ($syncMeta['anchor_month'] ?? '')) !== $monthStart->format('Y-m');
+if ($anchorChanged || $lastSyncTs === false || (time() - $lastSyncTs) >= ($interval * 60)) {
     runSync($buildings, $syncMeta, $monthStart);
-    $messages[] = 'Auto-sync executed in background.';
+    $messages[] = $anchorChanged ? 'Auto-sync executed for selected month window.' : 'Auto-sync executed in background.';
 }
 
 $reservations = dbFetchReservationsForCalendar();
@@ -999,9 +1001,34 @@ $liveApartments = array_values(array_filter(flattenApartments($buildings), stati
 }));
 $liveApartmentIds = array_column($liveApartments, 'id');
 $liveReservations = array_values(array_filter($reservations, static function (array $r) use ($liveApartmentIds): bool {
-    return in_array((string) ($r['apartment_id'] ?? ''), $liveApartmentIds, true)
-        && strtolower((string) ($r['booking_channel'] ?? '')) === 'pricelabs';
+    return in_array((string) ($r['apartment_id'] ?? ''), $liveApartmentIds, true);
 }));
+$today = new DateTimeImmutable('today', new DateTimeZone('UTC'));
+$tomorrow = $today->modify('+1 day')->format('Y-m-d');
+$todayStr = $today->format('Y-m-d');
+$liveReservations = array_map(static function (array $r) use ($todayStr, $tomorrow): array {
+    $start = (string) ($r['start'] ?? '');
+    $end = (string) ($r['end'] ?? '');
+    $status = strtolower((string) ($r['status'] ?? 'booked'));
+    $channel = strtolower((string) ($r['booking_channel'] ?? ''));
+    if (in_array($status, ['cancelled', 'canceled', 'maintenance', 'blocked'], true)) {
+        $r['status'] = 'maintenance';
+    } elseif ($end !== '' && $end <= $todayStr) {
+        $r['status'] = 'checked_out';
+    } elseif ($end === $tomorrow) {
+        $r['status'] = 'checkout_tomorrow';
+    } elseif ($start !== '' && $start <= $todayStr && $end > $todayStr) {
+        $r['status'] = 'booked';
+    }
+    if (str_contains($channel, 'airbnb')) {
+        $r['booking_channel'] = 'airbnb';
+    } elseif (str_contains($channel, 'booking')) {
+        $r['booking_channel'] = 'booking';
+    } elseif (str_contains($channel, 'expedia')) {
+        $r['booking_channel'] = 'expedia';
+    }
+    return $r;
+}, $liveReservations);
 $appData = [
     'apartments' => $liveApartments,
     'manualReservations' => [],
@@ -1013,11 +1040,11 @@ $appData = [
     'reservationDocuments' => reservationDocumentsByIds(array_column($liveReservations, 'id')),
     'statusColors' => [
         'booked' => '#2dc26b',
-        'reserved' => '#3498ff',
+        'reserved' => '#2dc26b',
         'checked_out' => '#ef4444',
-        'checkout_tomorrow' => '#f59e0b',
+        'checkout_tomorrow' => '#facc15',
         'maintenance' => '#8b5cf6',
-        'service' => '#ff7f50',
+        'service' => '#8b5cf6',
     ],
 ];
 ?>
