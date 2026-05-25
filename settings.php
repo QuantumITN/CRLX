@@ -453,6 +453,7 @@ function syncPricelabsReservations(array $buildings, array $cfg): array
     }
 
     $rowsToInsert = [];
+    $debug = ['listings_checked' => 0, 'endpoints_with_rows' => 0];
     $fromDate = (new DateTimeImmutable('first day of last month', new DateTimeZone('UTC')))->format('Y-m-d');
     $toDate = (new DateTimeImmutable('last day of next month', new DateTimeZone('UTC')))->format('Y-m-d');
     foreach ($buildings as $building) {
@@ -476,6 +477,7 @@ function syncPricelabsReservations(array $buildings, array $cfg): array
             $endpoints[] = '/v1/listings/' . rawurlencode($listingId) . '/reservations?from=' . rawurlencode($fromDate) . '&to=' . rawurlencode($toDate);
             $endpoints[] = '/v1/listings/' . rawurlencode($listingId) . '/reservations';
 
+            $debug['listings_checked']++;
             foreach ($endpoints as $endpoint) {
                 $ctx = stream_context_create(['http' => ['method' => 'GET', 'timeout' => 30, 'header' => "Accept: application/json\r\nx-api-key: {$apiKey}\r\nAuthorization: Bearer {$apiKey}\r\nUser-Agent: CRLX-PriceLabs-Bridge/1.0"]]);
                 $raw = @file_get_contents($baseUrl . $endpoint, false, $ctx);
@@ -487,6 +489,7 @@ function syncPricelabsReservations(array $buildings, array $cfg): array
                 if (!is_array($rows)) {
                     continue;
                 }
+                $rowsAdded = 0;
                 foreach ($rows as $row) {
                     if (!is_array($row)) {
                         continue;
@@ -509,8 +512,49 @@ function syncPricelabsReservations(array $buildings, array $cfg): array
                         'price_total' => ((string) ($row['price_total'] ?? $row['amount'] ?? '') === '' ? null : (float) ($row['price_total'] ?? $row['amount'])),
                         'price_currency' => (string) ($row['currency'] ?? 'EUR'),
                     ];
+                    $rowsAdded++;
+                }
+                if ($rowsAdded > 0) {
+                    $debug['endpoints_with_rows']++;
                 }
                 break;
+            }
+
+            if (empty(array_filter($rowsToInsert, static fn(array $r): bool => (string) ($r['apartment_id'] ?? '') === (string) ($apartment['id'] ?? '')))) {
+                foreach ([
+                    '/v1/listings/' . rawurlencode($listingId),
+                    '/v1/listing_data/' . rawurlencode($listingId),
+                ] as $fallbackEndpoint) {
+                    $ctx = stream_context_create(['http' => ['method' => 'GET', 'timeout' => 30, 'header' => "Accept: application/json\r\nx-api-key: {$apiKey}\r\nAuthorization: Bearer {$apiKey}\r\nUser-Agent: CRLX-PriceLabs-Bridge/1.0"]]);
+                    $raw = @file_get_contents($baseUrl . $fallbackEndpoint, false, $ctx);
+                    $json = is_string($raw) ? json_decode($raw, true) : null;
+                    if (!is_array($json)) {
+                        continue;
+                    }
+                    $blocked = $json['blocked_dates'] ?? $json['unavailable_dates'] ?? $json['calendar']['blocked_dates'] ?? null;
+                    if (!is_array($blocked)) {
+                        continue;
+                    }
+                    foreach ($blocked as $date) {
+                        $d = substr((string) $date, 0, 10);
+                        if ($d === '') {
+                            continue;
+                        }
+                        $end = (new DateTimeImmutable($d, new DateTimeZone('UTC')))->modify('+1 day')->format('Y-m-d');
+                        $rowsToInsert[] = [
+                            'id' => 'pl_block_' . md5($listingId . '|' . $d),
+                            'external_uid' => 'blocked_' . $d,
+                            'apartment_id' => (string) ($apartment['id'] ?? ''),
+                            'title' => (string) (($apartment['name'] ?? 'Apartment') . ' Blocked (PriceLabs)'),
+                            'status' => 'blocked',
+                            'start' => $d,
+                            'end' => $end,
+                            'price_total' => null,
+                            'price_currency' => 'EUR',
+                        ];
+                    }
+                    break;
+                }
             }
         }
     }
@@ -540,7 +584,11 @@ function syncPricelabsReservations(array $buildings, array $cfg): array
         return ['ok' => false, 'imported' => 0, 'message' => 'PriceLabs reservations sync failed in DB write.'];
     }
 
-    return ['ok' => true, 'imported' => count($rowsToInsert), 'message' => 'PriceLabs reservations synced.'];
+    $message = 'PriceLabs reservations synced.';
+    if (count($rowsToInsert) === 0) {
+        $message .= ' No rows returned by reservation endpoints. Checked ' . (int) $debug['listings_checked'] . ' mapped listing(s).';
+    }
+    return ['ok' => true, 'imported' => count($rowsToInsert), 'message' => $message];
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
