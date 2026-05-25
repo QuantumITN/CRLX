@@ -35,6 +35,12 @@ function readJson(string $file, array $default): array
     return is_array($json) ? $json : $default;
 }
 
+function writeJson(string $file, array $data): bool
+{
+    $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    return is_string($json) && file_put_contents($file, $json) !== false;
+}
+
 function normalizeDate(string $raw): ?DateTimeImmutable
 {
     $raw = trim($raw);
