@@ -528,25 +528,47 @@ function runSync(array $buildings, array &$syncMeta, ?DateTimeImmutable $anchorM
         $childKeys = ['children', 'num_children', 'child_count', 'kids', 'number_of_children', 'children_count'];
         $totalKeys = ['guest_count', 'guests', 'pax', 'occupancy', 'party_size', 'total_guests'];
 
-        $adults = $pickInt($row, $adultKeys, -1);
-        $children = $pickInt($row, $childKeys, -1);
-        $total = $pickInt($row, $totalKeys, -1);
+        $adults = -1;
+        $children = -1;
+        $total = -1;
 
-        foreach (['guest', 'guest_details', 'occupancy', 'reservation', 'booking'] as $nestedKey) {
-            $nested = $row[$nestedKey] ?? null;
-            if (!is_array($nested)) {
-                continue;
+        $scanNode = static function ($node, int $depth = 0) use (&$scanNode, $pickInt, $adultKeys, $childKeys, $totalKeys, &$adults, &$children, &$total): void {
+            if ($depth > 4 || !is_array($node)) {
+                return;
             }
+
             if ($adults < 0) {
-                $adults = $pickInt($nested, $adultKeys, -1);
+                $adults = $pickInt($node, $adultKeys, -1);
             }
             if ($children < 0) {
-                $children = $pickInt($nested, $childKeys, -1);
+                $children = $pickInt($node, $childKeys, -1);
             }
             if ($total < 0) {
-                $total = $pickInt($nested, $totalKeys, -1);
+                $total = $pickInt($node, $totalKeys, -1);
             }
-        }
+
+            foreach ($node as $k => $v) {
+                if (is_array($v)) {
+                    $scanNode($v, $depth + 1);
+                    continue;
+                }
+                if (!is_string($v)) {
+                    continue;
+                }
+                $text = strtolower($v);
+                if ($adults < 0 && preg_match('/(\d+)\s*(adult|adults)\b/', $text, $m)) {
+                    $adults = max(0, (int) $m[1]);
+                }
+                if ($children < 0 && preg_match('/(\d+)\s*(child|children|kids)\b/', $text, $m)) {
+                    $children = max(0, (int) $m[1]);
+                }
+                if ($total < 0 && ($k === 'summary' || $k === 'description') && preg_match('/(\d+)\s*(guest|guests|pax|people)/', $text, $m)) {
+                    $total = max(0, (int) $m[1]);
+                }
+            }
+        };
+
+        $scanNode($row);
 
         if ($children < 0) {
             $children = 0;
@@ -555,11 +577,11 @@ function runSync(array $buildings, array &$syncMeta, ?DateTimeImmutable $anchorM
             if ($total >= 0) {
                 $adults = max(0, $total - $children);
             } else {
-                $adults = 0;
+                $adults = 1;
             }
         }
         if ($total >= 0 && $adults + $children === 0) {
-            $adults = $total;
+            $adults = max(1, $total);
         }
 
         return ['adults' => $adults, 'children' => $children];
