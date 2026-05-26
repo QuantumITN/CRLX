@@ -189,7 +189,7 @@ function dbFetchReservationsForCalendar(): array
             'customer_phone' => (string) ($r['customer_phone'] ?? ''),
             'customer_country' => (string) ($r['customer_country'] ?? ''),
             'customer_document' => (string) ($r['customer_document'] ?? ''),
-            'adults' => (int) ($r['adults'] ?? 1),
+            'adults' => (int) ($r['adults'] ?? 0),
             'children' => (int) ($r['children'] ?? 0),
             'notes' => (string) ($r['notes'] ?? ''),
             'price_total' => (string) ($r['price_total'] ?? ''),
@@ -506,6 +506,22 @@ function runSync(array $buildings, array &$syncMeta, ?DateTimeImmutable $anchorM
         }
         return '';
     };
+
+    $pickInt = static function (array $row, array $keys, int $default = 0): int {
+        foreach ($keys as $k) {
+            if (!isset($row[$k])) {
+                continue;
+            }
+            $v = $row[$k];
+            if (is_numeric($v)) {
+                return max(0, (int) $v);
+            }
+            if (is_string($v) && preg_match('/-?\d+/', $v, $m)) {
+                return max(0, (int) $m[0]);
+            }
+        }
+        return $default;
+    };
     $settings = readJson(SETTINGS_FILE, []);
     $plCfg = is_array($settings['pricelabs'] ?? null) ? $settings['pricelabs'] : [];
     $plKey = trim((string) ($plCfg['api_key'] ?? ''));
@@ -738,6 +754,8 @@ function runSync(array $buildings, array &$syncMeta, ?DateTimeImmutable $anchorM
                     'source' => $mapPriceLabsChannel($row),
                     'price_total' => ((string) ($row['price_total'] ?? $row['amount'] ?? $row['rental_revenue'] ?? '') === '' ? null : (float) ($row['price_total'] ?? $row['amount'] ?? $row['rental_revenue'])),
                     'price_currency' => (string) ($row['currency'] ?? 'EUR'),
+                    'adults' => $pickInt($row, ['adults', 'num_adults', 'adult_count', 'guest_count', 'guests', 'pax'], 1),
+                    'children' => $pickInt($row, ['children', 'num_children', 'child_count', 'kids'], 0),
                 ];
             }
             if ($plEvents !== []) {
@@ -792,6 +810,8 @@ function runSync(array $buildings, array &$syncMeta, ?DateTimeImmutable $anchorM
                         'source' => $mapPriceLabsChannel($row),
                         'price_total' => ((string) ($row['price_total'] ?? $row['amount'] ?? '') === '' ? null : (float) ($row['price_total'] ?? $row['amount'])),
                         'price_currency' => (string) ($row['currency'] ?? 'EUR'),
+                    'adults' => $pickInt($row, ['adults', 'num_adults', 'adult_count', 'guest_count', 'guests', 'pax'], 1),
+                    'children' => $pickInt($row, ['children', 'num_children', 'child_count', 'kids'], 0),
                     ];
                 }
                 break;
@@ -828,6 +848,8 @@ function runSync(array $buildings, array &$syncMeta, ?DateTimeImmutable $anchorM
                             'source' => 'blocked',
                             'price_total' => null,
                             'price_currency' => 'EUR',
+                            'adults' => 0,
+                            'children' => 0,
                         ];
                         $plDebug['blocked_days']++;
                     }
@@ -846,7 +868,7 @@ function runSync(array $buildings, array &$syncMeta, ?DateTimeImmutable $anchorM
         try {
             $pdo->beginTransaction();
             $pdo->exec("DELETE FROM reservations WHERE source='ical' OR booking_channel='pricelabs'");
-            $ins = $pdo->prepare('INSERT INTO reservations (reservation_uuid, apartment_id, source, external_uid, title, status, start_date, end_date, readonly_flag, booking_channel, price_total, price_currency) VALUES (:uuid,:apartment,:source,:external_uid,:title,:status,:start,:end,1,:channel,:price_total,:currency)');
+            $ins = $pdo->prepare('INSERT INTO reservations (reservation_uuid, apartment_id, source, external_uid, title, status, start_date, end_date, readonly_flag, booking_channel, price_total, price_currency, adults, children) VALUES (:uuid,:apartment,:source,:external_uid,:title,:status,:start,:end,1,:channel,:price_total,:currency,:adults,:children)');
             foreach ($ical as $r) {
                 $apt = (string) $r['apartment_id'];
                 $start = (string) $r['start'];
@@ -868,6 +890,8 @@ function runSync(array $buildings, array &$syncMeta, ?DateTimeImmutable $anchorM
                     ':channel' => (string) ($r['source'] ?? 'ical'),
                     ':price_total' => ((string) ($r['price_total'] ?? '') === '' ? null : (float) $r['price_total']),
                     ':currency' => (string) ($r['price_currency'] ?? 'EUR'),
+                    ':adults' => max(0, (int) ($r['adults'] ?? 1)),
+                    ':children' => max(0, (int) ($r['children'] ?? 0)),
                 ]);
             }
             $pdo->commit();
