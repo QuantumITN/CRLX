@@ -182,7 +182,7 @@ function dbFetchReservationsForCalendar(): array
             'start' => (string) $r['start_date'],
             'end' => (string) $r['end_date'],
             'source' => (string) $r['source'],
-            'readonly' => ((int) $r['readonly_flag']) === 1,
+            'readonly' => ((int) $r['readonly_flag']) === 1 && strtolower((string) ($r['source'] ?? '')) !== 'ical',
             'customer_first_name' => (string) ($r['customer_first_name'] ?? ''),
             'customer_last_name' => (string) ($r['customer_last_name'] ?? ''),
             'customer_email' => (string) ($r['customer_email'] ?? ''),
@@ -240,7 +240,7 @@ function dbSaveDragUpdates(array $manual): bool
 
     try {
         $pdo->beginTransaction();
-        $update = $pdo->prepare('UPDATE reservations SET apartment_id = :apartment_id, start_date = :start_date, end_date = :end_date, updated_at = NOW() WHERE reservation_uuid = :uuid AND source = "manual" AND archived_flag = 0');
+        $update = $pdo->prepare('UPDATE reservations SET apartment_id = :apartment_id, start_date = :start_date, end_date = :end_date, updated_at = NOW() WHERE reservation_uuid = :uuid AND archived_flag = 0');
         $event = $pdo->prepare('INSERT INTO reservation_events (reservation_uuid, event_type, payload_json) VALUES (:uuid, :event_type, :payload)');
 
         foreach ($manual as $r) {
@@ -279,7 +279,7 @@ function dbSaveDragUpdates(array $manual): bool
 }
 
 
-function dbUpdateManualReservation(array $reservation): bool
+function dbUpdateReservation(array $reservation): bool
 {
     $pdo = getDbPdo();
     if (!$pdo) {
@@ -295,7 +295,7 @@ function dbUpdateManualReservation(array $reservation): bool
         return false;
     }
 
-    $stmt = $pdo->prepare('UPDATE reservations SET apartment_id = :apartment_id, title = :title, status = :status, start_date = :start_date, end_date = :end_date, customer_first_name = :first, customer_last_name = :last, customer_email = :email, customer_phone = :phone, customer_country = :country, customer_document = :document, adults = :adults, children = :children, notes = :notes, price_total = :price_total, price_currency = :currency, tax_amount = :tax, cleaning_fee = :cleaning, discount_amount = :discount, payment_status = :payment_status, payment_method = :payment_method, booking_channel = :booking_channel, updated_at = NOW() WHERE reservation_uuid = :uuid AND source = "manual" AND archived_flag = 0');
+    $stmt = $pdo->prepare('UPDATE reservations SET apartment_id = :apartment_id, title = :title, status = :status, start_date = :start_date, end_date = :end_date, customer_first_name = :first, customer_last_name = :last, customer_email = :email, customer_phone = :phone, customer_country = :country, customer_document = :document, adults = :adults, children = :children, notes = :notes, price_total = :price_total, price_currency = :currency, tax_amount = :tax, cleaning_fee = :cleaning, discount_amount = :discount, payment_status = :payment_status, payment_method = :payment_method, booking_channel = :booking_channel, updated_at = NOW() WHERE reservation_uuid = :uuid AND archived_flag = 0');
     $ok = $stmt->execute([
         ':apartment_id' => $apartmentId,
         ':title' => (string) ($reservation['title'] ?? 'Manual reservation'),
@@ -326,7 +326,7 @@ function dbUpdateManualReservation(array $reservation): bool
         $event = $pdo->prepare('INSERT INTO reservation_events (reservation_uuid, event_type, payload_json) VALUES (:uuid, :event_type, :payload)');
         $event->execute([
             ':uuid' => (string) ($reservation['id'] ?? ''),
-            ':event_type' => 'manual_update',
+            ':event_type' => 'reservation_update',
             ':payload' => json_encode($reservation),
         ]);
     }
@@ -340,7 +340,7 @@ function dbGetReservationByUuid(string $uuid): ?array
     if (!$pdo) {
         return null;
     }
-    $stmt = $pdo->prepare('SELECT reservation_uuid, external_uid, booking_channel FROM reservations WHERE reservation_uuid = :uuid AND archived_flag = 0 LIMIT 1');
+    $stmt = $pdo->prepare('SELECT reservation_uuid, external_uid, booking_channel, source FROM reservations WHERE reservation_uuid = :uuid AND archived_flag = 0 LIMIT 1');
     $stmt->execute([':uuid' => $uuid]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
     return is_array($row) ? $row : null;
@@ -396,7 +396,7 @@ function dbDeleteManualReservation(string $reservationId): bool
         return false;
     }
 
-    $stmt = $pdo->prepare('DELETE FROM reservations WHERE reservation_uuid = :uuid AND source = "manual" AND archived_flag = 0');
+    $stmt = $pdo->prepare('DELETE FROM reservations WHERE reservation_uuid = :uuid AND archived_flag = 0');
     $ok = $stmt->execute([':uuid' => $reservationId]);
 
     if ($ok) {
@@ -914,11 +914,11 @@ if ($action === 'api_update_reservation' && $_SERVER['REQUEST_METHOD'] === 'POST
     header('Content-Type: application/json; charset=utf-8');
     $payload = json_decode((string) file_get_contents('php://input'), true);
     $reservation = is_array($payload['reservation'] ?? null) ? $payload['reservation'] : [];
-    $ok = dbUpdateManualReservation($reservation);
+    $ok = dbUpdateReservation($reservation);
     $message = $ok ? 'Updated.' : 'Update rejected due to overlap or invalid payload.';
     if ($ok) {
         $existing = dbGetReservationByUuid((string) ($reservation['id'] ?? ''));
-        if ($existing && strtolower((string) ($existing['booking_channel'] ?? '')) === 'pricelabs') {
+        if ($existing && strtolower((string) ($existing['source'] ?? '')) === 'ical' && trim((string) ($existing['external_uid'] ?? '')) !== '') {
             $reservation['external_uid'] = (string) ($existing['external_uid'] ?? '');
             $sync = pushPricelabsReservationUpdate($reservation);
             if (!$sync['ok']) {
