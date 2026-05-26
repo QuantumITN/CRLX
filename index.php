@@ -522,6 +522,48 @@ function runSync(array $buildings, array &$syncMeta, ?DateTimeImmutable $anchorM
         }
         return $default;
     };
+
+    $extractGuestCounts = static function (array $row) use ($pickInt): array {
+        $adultKeys = ['adults', 'num_adults', 'adult_count', 'number_of_adults', 'adults_count'];
+        $childKeys = ['children', 'num_children', 'child_count', 'kids', 'number_of_children', 'children_count'];
+        $totalKeys = ['guest_count', 'guests', 'pax', 'occupancy', 'party_size', 'total_guests'];
+
+        $adults = $pickInt($row, $adultKeys, -1);
+        $children = $pickInt($row, $childKeys, -1);
+        $total = $pickInt($row, $totalKeys, -1);
+
+        foreach (['guest', 'guest_details', 'occupancy', 'reservation', 'booking'] as $nestedKey) {
+            $nested = $row[$nestedKey] ?? null;
+            if (!is_array($nested)) {
+                continue;
+            }
+            if ($adults < 0) {
+                $adults = $pickInt($nested, $adultKeys, -1);
+            }
+            if ($children < 0) {
+                $children = $pickInt($nested, $childKeys, -1);
+            }
+            if ($total < 0) {
+                $total = $pickInt($nested, $totalKeys, -1);
+            }
+        }
+
+        if ($children < 0) {
+            $children = 0;
+        }
+        if ($adults < 0) {
+            if ($total >= 0) {
+                $adults = max(0, $total - $children);
+            } else {
+                $adults = 0;
+            }
+        }
+        if ($total >= 0 && $adults + $children === 0) {
+            $adults = $total;
+        }
+
+        return ['adults' => $adults, 'children' => $children];
+    };
     $settings = readJson(SETTINGS_FILE, []);
     $plCfg = is_array($settings['pricelabs'] ?? null) ? $settings['pricelabs'] : [];
     $plKey = trim((string) ($plCfg['api_key'] ?? ''));
@@ -743,6 +785,7 @@ function runSync(array $buildings, array &$syncMeta, ?DateTimeImmutable $anchorM
                 }
                 $rawStatus = strtolower(trim((string) ($row['status'] ?? $row['reservation_status'] ?? $row['booking_status'] ?? 'booked')));
                 $statusValue = in_array($rawStatus, ['booked', 'reserved', 'blocked', 'cancelled', 'checkedout', 'checked_out'], true) ? $rawStatus : 'booked';
+                $guestCounts = $extractGuestCounts($row);
                 $plEvents[] = [
                     'id' => 'pl_' . md5($listingId . '|' . ($row['id'] ?? $row['reservation_id'] ?? $start . $end)),
                     'external_uid' => (string) ($row['id'] ?? $row['reservation_id'] ?? ''),
@@ -754,8 +797,8 @@ function runSync(array $buildings, array &$syncMeta, ?DateTimeImmutable $anchorM
                     'source' => $mapPriceLabsChannel($row),
                     'price_total' => ((string) ($row['price_total'] ?? $row['amount'] ?? $row['rental_revenue'] ?? '') === '' ? null : (float) ($row['price_total'] ?? $row['amount'] ?? $row['rental_revenue'])),
                     'price_currency' => (string) ($row['currency'] ?? 'EUR'),
-                    'adults' => $pickInt($row, ['adults', 'num_adults', 'adult_count', 'guest_count', 'guests', 'pax'], 1),
-                    'children' => $pickInt($row, ['children', 'num_children', 'child_count', 'kids'], 0),
+                    'adults' => (int) $guestCounts['adults'],
+                    'children' => (int) $guestCounts['children'],
                 ];
             }
             if ($plEvents !== []) {
@@ -799,6 +842,7 @@ function runSync(array $buildings, array &$syncMeta, ?DateTimeImmutable $anchorM
                     }
                     $rawStatus = strtolower(trim((string) ($row['status'] ?? $row['reservation_status'] ?? $row['booking_status'] ?? 'booked')));
                     $statusValue = in_array($rawStatus, ['booked', 'reserved', 'blocked', 'cancelled', 'checkedout', 'checked_out'], true) ? $rawStatus : 'booked';
+                    $guestCounts = $extractGuestCounts($row);
                     $plEvents[] = [
                         'id' => 'pl_' . md5($listingId . '|' . ($row['id'] ?? $row['reservation_id'] ?? $start . $end)),
                         'external_uid' => (string) ($row['id'] ?? $row['reservation_id'] ?? ''),
@@ -810,8 +854,8 @@ function runSync(array $buildings, array &$syncMeta, ?DateTimeImmutable $anchorM
                         'source' => $mapPriceLabsChannel($row),
                         'price_total' => ((string) ($row['price_total'] ?? $row['amount'] ?? '') === '' ? null : (float) ($row['price_total'] ?? $row['amount'])),
                         'price_currency' => (string) ($row['currency'] ?? 'EUR'),
-                    'adults' => $pickInt($row, ['adults', 'num_adults', 'adult_count', 'guest_count', 'guests', 'pax'], 1),
-                    'children' => $pickInt($row, ['children', 'num_children', 'child_count', 'kids'], 0),
+                        'adults' => (int) $guestCounts['adults'],
+                        'children' => (int) $guestCounts['children'],
                     ];
                 }
                 break;
