@@ -439,9 +439,9 @@ function runSync(array $buildings, array &$syncMeta, ?DateTimeImmutable $anchorM
 {
     $mapPriceLabsChannel = static function (array $row): string {
         $channelFields = [
-            'channel', 'source', 'ota', 'pms', 'integration', 'integration_name',
+            'channel', 'source', 'ota', 'integration', 'integration_name',
             'channel_name', 'source_name', 'reservation_source', 'booking_source',
-            'platform', 'platform_name', 'provider', 'provider_name', 'pms_name',
+            'platform', 'platform_name', 'provider', 'provider_name',
         ];
 
         $candidates = [];

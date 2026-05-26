@@ -268,7 +268,7 @@
       const sourceChip = document.createElement('span');
       sourceChip.className = 'bar-source-chip';
       sourceChip.style.background = sourceColor;
-      sourceChip.textContent = sourceKey === 'booking' ? 'BOOKING.COM' : (sourceKey === 'pricelabs' ? 'LIVE IMPORT' : sourceKey.toUpperCase());
+      sourceChip.textContent = sourceKey === 'booking' ? 'BOOKING.COM' : (sourceKey === 'pricelabs' ? 'UNMAPPED' : sourceKey.toUpperCase());
 
       const text = document.createElement('span');
       text.className = 'bar-text';
