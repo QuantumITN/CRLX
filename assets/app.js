@@ -275,12 +275,11 @@
 
       const text = document.createElement('span');
       text.className = 'bar-text';
-      const paid = Number.parseFloat(String(r.price_total ?? ''));
-      const currency = String(r.price_currency || '').trim();
-      const amountLabel = Number.isFinite(paid)
-        ? `${currency ? currency + ' ' : ''}${paid.toFixed(2)}`
-        : 'Amount N/A';
-      text.textContent = `${len} day${len === 1 ? '' : 's'} • ${amountLabel}`;
+      const adults = Number.parseInt(String(r.adults ?? 0), 10);
+      const children = Number.parseInt(String(r.children ?? 0), 10);
+      const adultsLabel = Number.isFinite(adults) && adults > 0 ? adults : 0;
+      const childrenLabel = Number.isFinite(children) && children > 0 ? children : 0;
+      text.textContent = `${len} day${len === 1 ? '' : 's'} • ${adultsLabel} adult${adultsLabel === 1 ? '' : 's'}${childrenLabel > 0 ? `, ${childrenLabel} child${childrenLabel === 1 ? '' : 'ren'}` : ''}`;
 
       if (sourceKey) {
         content.appendChild(sourceChip);
