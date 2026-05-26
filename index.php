@@ -441,7 +441,7 @@ function runSync(array $buildings, array &$syncMeta, ?DateTimeImmutable $anchorM
         $channelFields = [
             'channel', 'source', 'ota', 'integration', 'integration_name',
             'channel_name', 'source_name', 'reservation_source', 'booking_source',
-            'platform', 'platform_name', 'provider', 'provider_name',
+            'platform', 'platform_name', 'provider', 'provider_name', 'booking_channel', 'bookingChannel', 'ota_channel',
         ];
 
         $candidates = [];
