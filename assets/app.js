@@ -260,6 +260,9 @@
       bar.style.background = statusColors[r.status] || '#64748b';
       const sourceRaw = String(r.booking_channel || r.source || 'manual').toLowerCase();
       let sourceKey = sourceRaw.includes('booking') ? 'booking' : (sourceRaw.includes('airbnb') ? 'airbnb' : sourceRaw);
+      if (!['airbnb', 'booking', 'expedia', 'vrbo'].includes(sourceKey)) {
+        sourceKey = '';
+      }
       const sourceColor = sourceColors[sourceKey] || '#475569';
 
       const content = document.createElement('span');
@@ -268,13 +271,20 @@
       const sourceChip = document.createElement('span');
       sourceChip.className = 'bar-source-chip';
       sourceChip.style.background = sourceColor;
-      sourceChip.textContent = sourceKey === 'booking' ? 'BOOKING.COM' : (sourceKey === 'pricelabs' ? 'UNMAPPED' : sourceKey.toUpperCase());
+      sourceChip.textContent = sourceKey === 'booking' ? 'BOOKING.COM' : sourceKey.toUpperCase();
 
       const text = document.createElement('span');
       text.className = 'bar-text';
-      text.textContent = `${(r.title || r.status || 'reservation').toUpperCase()} (${r.start} → ${r.end})`;
+      const paid = Number.parseFloat(String(r.price_total ?? ''));
+      const currency = String(r.price_currency || '').trim();
+      const amountLabel = Number.isFinite(paid)
+        ? `${currency ? currency + ' ' : ''}${paid.toFixed(2)}`
+        : 'Amount N/A';
+      text.textContent = `${len} day${len === 1 ? '' : 's'} • ${amountLabel}`;
 
-      content.appendChild(sourceChip);
+      if (sourceKey) {
+        content.appendChild(sourceChip);
+      }
       content.appendChild(text);
       bar.appendChild(content);
       bar.addEventListener('click', () => {
