@@ -524,9 +524,9 @@ function runSync(array $buildings, array &$syncMeta, ?DateTimeImmutable $anchorM
     };
 
     $extractGuestCounts = static function (array $row) use ($pickInt): array {
-        $adultKeys = ['adults', 'num_adults', 'adult_count', 'number_of_adults', 'adults_count'];
-        $childKeys = ['children', 'num_children', 'child_count', 'kids', 'number_of_children', 'children_count'];
-        $totalKeys = ['guest_count', 'guests', 'pax', 'occupancy', 'party_size', 'total_guests'];
+        $adultKeys = ['adults', 'num_adults', 'adult_count', 'number_of_adults', 'adults_count', 'adultsCount', 'adultCount'];
+        $childKeys = ['children', 'num_children', 'child_count', 'kids', 'number_of_children', 'children_count', 'childrenCount', 'childCount'];
+        $totalKeys = ['guest_count', 'guests', 'pax', 'occupancy', 'party_size', 'total_guests', 'guestCount', 'totalGuests', 'number_of_guests'];
 
         $adults = -1;
         $children = -1;
@@ -549,6 +549,16 @@ function runSync(array $buildings, array &$syncMeta, ?DateTimeImmutable $anchorM
 
             foreach ($node as $k => $v) {
                 if (is_array($v)) {
+                    if (isset($v['type'], $v['count']) && is_scalar($v['type']) && is_numeric($v['count'])) {
+                        $t = strtolower((string) $v['type']);
+                        $c = max(0, (int) $v['count']);
+                        if ($adults < 0 && str_contains($t, 'adult')) {
+                            $adults = $c;
+                        }
+                        if ($children < 0 && (str_contains($t, 'child') || str_contains($t, 'kid'))) {
+                            $children = $c;
+                        }
+                    }
                     $scanNode($v, $depth + 1);
                     continue;
                 }
@@ -562,7 +572,7 @@ function runSync(array $buildings, array &$syncMeta, ?DateTimeImmutable $anchorM
                 if ($children < 0 && preg_match('/(\d+)\s*(child|children|kids)\b/', $text, $m)) {
                     $children = max(0, (int) $m[1]);
                 }
-                if ($total < 0 && ($k === 'summary' || $k === 'description') && preg_match('/(\d+)\s*(guest|guests|pax|people)/', $text, $m)) {
+                if ($total < 0 && ($k === 'summary' || $k === 'description' || $k === 'title' || $k === 'notes') && preg_match('/(\d+)\s*(guest|guests|pax|people)/', $text, $m)) {
                     $total = max(0, (int) $m[1]);
                 }
             }
