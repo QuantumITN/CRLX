@@ -1,0 +1,4 @@
+data/*.json
+data/db_config.php
+data/uploads/*
+!data/uploads/.gitkeep
