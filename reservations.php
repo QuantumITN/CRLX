@@ -13,6 +13,7 @@ date_default_timezone_set('UTC');
 
 const DATA_DIR = __DIR__ . '/data';
 const BUILDINGS_FILE = DATA_DIR . '/buildings.json';
+const SETTINGS_FILE = DATA_DIR . '/settings.json';
 
 function readJson(string $file, array $default): array
 {
@@ -43,6 +44,7 @@ function flattenApartments(array $buildings): array
                 'building_name' => (string) ($building['name'] ?? 'Building'),
                 'id' => (string) ($apartment['id'] ?? ''),
                 'name' => (string) ($apartment['name'] ?? 'Apartment'),
+                'external_refs' => is_array($apartment['external_refs'] ?? null) ? $apartment['external_refs'] : [],
             ];
         }
     }
@@ -76,6 +78,93 @@ function dbHasOverlap(string $apartmentId, string $startDate, string $endDate, ?
     return ((int) $stmt->fetchColumn()) > 0;
 }
 
+function buildPriceLabsReservationPayload(array $reservation, array $apartment, string $reservationId): array
+{
+    $settings = readJson(SETTINGS_FILE, []);
+    $pl = is_array($settings['pricelabs'] ?? null) ? $settings['pricelabs'] : [];
+    $refs = is_array($apartment['external_refs'] ?? null) ? $apartment['external_refs'] : [];
+    $listingId = trim((string) ($refs['pricelabs_listing_id'] ?? ''));
+    $start = (string) ($reservation['start_date'] ?? '');
+    $end = (string) ($reservation['end_date'] ?? '');
+    $nights = 0;
+    if ($start !== '' && $end !== '') {
+        try {
+            $nights = max(0, (int) (new DateTimeImmutable($start))->diff(new DateTimeImmutable($end))->format('%r%a'));
+        } catch (Throwable $e) {
+            $nights = 0;
+        }
+    }
+    $total = ((string) ($reservation['price_total'] ?? '') === '') ? 0.0 : (float) $reservation['price_total'];
+    $cleaning = ((string) ($reservation['cleaning_fee'] ?? '') === '') ? 0.0 : (float) $reservation['cleaning_fee'];
+    $tax = ((string) ($reservation['tax_amount'] ?? '') === '') ? 0.0 : (float) $reservation['tax_amount'];
+    $discount = ((string) ($reservation['discount_amount'] ?? '') === '') ? 0.0 : (float) $reservation['discount_amount'];
+    $rentalRevenue = max(0.0, $total - $cleaning - $tax + $discount);
+    $guestName = trim(((string) ($reservation['customer_first_name'] ?? '')) . ' ' . ((string) ($reservation['customer_last_name'] ?? '')));
+
+    return [
+        'pms_name' => (string) ($pl['pms'] ?? 'direct'),
+        'listing_id' => $listingId,
+        'listing_name' => (string) ($refs['pricelabs_name'] ?? $apartment['name'] ?? ''),
+        'reservation_id' => $reservationId,
+        'check_in' => $start,
+        'check_out' => $end,
+        'booking_status' => (string) ($reservation['status'] ?? 'booked'),
+        'booked_date' => gmdate('Y-m-d'),
+        'rental_revenue' => number_format($rentalRevenue, 2, '.', ''),
+        'total_cost' => number_format($total, 2, '.', ''),
+        'no_of_days' => $nights,
+        'currency' => (string) ($reservation['price_currency'] ?? 'EUR'),
+        'cleaning_fees' => $cleaning,
+        'booking_channel' => (string) (($reservation['booking_channel'] ?? '') ?: 'Direct'),
+        'channelConfirmationCode' => 'CRLX-' . $reservationId,
+        'guest_name' => $guestName,
+        'guest_email' => (string) ($reservation['customer_email'] ?? ''),
+        'guest_phone' => (string) ($reservation['customer_phone'] ?? ''),
+        'adults' => max(0, (int) ($reservation['adults'] ?? 0)),
+        'children' => max(0, (int) ($reservation['children'] ?? 0)),
+    ];
+}
+
+function pushPriceLabsReservationCreate(array $reservation, array $apartment, string $reservationId): array
+{
+    $settings = readJson(SETTINGS_FILE, []);
+    $pl = is_array($settings['pricelabs'] ?? null) ? $settings['pricelabs'] : [];
+    $apiKey = trim((string) ($pl['api_key'] ?? ''));
+    $baseUrl = rtrim(trim((string) ($pl['base_url'] ?? 'https://api.pricelabs.co')), '/');
+    $pms = trim((string) ($pl['pms'] ?? ''));
+    $refs = is_array($apartment['external_refs'] ?? null) ? $apartment['external_refs'] : [];
+    $listingId = trim((string) ($refs['pricelabs_listing_id'] ?? ''));
+
+    if ($listingId === '') {
+        return ['ok' => false, 'skipped' => true, 'message' => 'Apartment is not mapped to a PriceLabs listing.'];
+    }
+    if ($apiKey === '') {
+        return ['ok' => false, 'skipped' => true, 'message' => 'PriceLabs API key is missing in Settings.'];
+    }
+
+    $payload = buildPriceLabsReservationPayload($reservation, $apartment, $reservationId);
+    $json = json_encode($payload);
+    if (!is_string($json)) {
+        return ['ok' => false, 'message' => 'Could not encode PriceLabs reservation payload.'];
+    }
+
+    $endpoints = ['/v1/reservations'];
+    if ($pms !== '') {
+        $endpoints[] = '/v1/reservations?pms=' . rawurlencode($pms);
+    }
+    $headers = "Content-Type: application/json\r\nAccept: application/json\r\nx-api-key: {$apiKey}\r\nAuthorization: Bearer {$apiKey}\r\nUser-Agent: CRLX-PriceLabs-Bridge/1.0";
+    foreach (array_values(array_unique($endpoints)) as $endpoint) {
+        $ctx = stream_context_create(['http' => ['method' => 'POST', 'timeout' => 30, 'header' => $headers, 'content' => $json, 'ignore_errors' => true]]);
+        $raw = @file_get_contents($baseUrl . $endpoint, false, $ctx);
+        $statusLine = (string) (($http_response_header[0] ?? '') ?: '');
+        if ($raw !== false && (preg_match('/\s(2\d\d)\s/', $statusLine) || $statusLine === '')) {
+            return ['ok' => true, 'message' => 'Reservation pushed to PriceLabs.'];
+        }
+    }
+
+    return ['ok' => false, 'message' => 'PriceLabs rejected or did not accept the reservation create request.'];
+}
+
 function dbInsertManualReservation(array $r): bool
 {
     $pdo = getDbPdo();
@@ -83,11 +172,12 @@ function dbInsertManualReservation(array $r): bool
         return false;
     }
 
-    $stmt = $pdo->prepare('INSERT INTO reservations (reservation_uuid, apartment_id, source, title, status, start_date, end_date, customer_first_name, customer_last_name, customer_email, customer_phone, customer_country, customer_document, adults, children, notes, price_total, price_currency, tax_amount, cleaning_fee, discount_amount, payment_status, payment_method, booking_channel, readonly_flag) VALUES (:uuid,:apartment_id,"manual",:title,:status,:start_date,:end_date,:first,:last,:email,:phone,:country,:document,:adults,:children,:notes,:price_total,:currency,:tax,:cleaning,:discount,:payment_status,:payment_method,:channel,0)');
+    $stmt = $pdo->prepare('INSERT INTO reservations (reservation_uuid, apartment_id, source, external_uid, title, status, start_date, end_date, customer_first_name, customer_last_name, customer_email, customer_phone, customer_country, customer_document, adults, children, notes, price_total, price_currency, tax_amount, cleaning_fee, discount_amount, payment_status, payment_method, booking_channel, readonly_flag) VALUES (:uuid,:apartment_id,"manual",:external_uid,:title,:status,:start_date,:end_date,:first,:last,:email,:phone,:country,:document,:adults,:children,:notes,:price_total,:currency,:tax,:cleaning,:discount,:payment_status,:payment_method,:channel,0)');
 
     $ok = $stmt->execute([
         ':uuid' => (string) ($r['id'] ?? generateId('m')),
         ':apartment_id' => (string) $r['apartment_id'],
+        ':external_uid' => (string) ($r['external_uid'] ?? ''),
         ':title' => (string) $r['title'],
         ':status' => (string) $r['status'],
         ':start_date' => (string) $r['start_date'],
@@ -220,9 +310,11 @@ $buildings = readJson(BUILDINGS_FILE, []);
 $apartments = flattenApartments($buildings);
 $apartmentNameById = [];
 $buildingNameByApartmentId = [];
+$apartmentById = [];
 foreach ($apartments as $apartment) {
     $apartmentNameById[(string) $apartment['id']] = (string) ($apartment['building_name'] . ' - ' . $apartment['name']);
     $buildingNameByApartmentId[(string) $apartment['id']] = (string) ($apartment['building_name'] ?? '');
+    $apartmentById[(string) $apartment['id']] = $apartment;
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -261,10 +353,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = 'MySQL is not configured. Configure DB first.';
         } elseif (dbHasOverlap($reservation['apartment_id'], $reservation['start_date'], $reservation['end_date'])) {
             $errors[] = 'Could not save reservation: overlap detected (double-booking protection).';
-        } elseif (dbInsertManualReservation($reservation)) {
-            $messages[] = 'Manual reservation saved successfully.';
         } else {
-            $errors[] = 'Could not save reservation in MySQL.';
+            $apartment = $apartmentById[$reservation['apartment_id']] ?? [];
+            $reservation['external_uid'] = $reservation['id'];
+            if (dbInsertManualReservation($reservation)) {
+                $messages[] = 'Manual reservation saved successfully.';
+                $priceLabsResult = is_array($apartment) ? pushPriceLabsReservationCreate($reservation, $apartment, (string) $reservation['id']) : ['ok' => false, 'skipped' => true, 'message' => 'Apartment not found for PriceLabs sync.'];
+                if (!empty($priceLabsResult['ok'])) {
+                    $messages[] = (string) ($priceLabsResult['message'] ?? 'Reservation pushed to PriceLabs.');
+                } elseif (!empty($priceLabsResult['skipped'])) {
+                    $messages[] = 'PriceLabs sync skipped: ' . (string) ($priceLabsResult['message'] ?? 'No mapped PriceLabs listing.');
+                } else {
+                    $errors[] = 'Local reservation was saved, but PriceLabs sync failed: ' . (string) ($priceLabsResult['message'] ?? 'Unknown API error.');
+                }
+            } else {
+                $errors[] = 'Could not save reservation in MySQL.';
+            }
         }
     }
 

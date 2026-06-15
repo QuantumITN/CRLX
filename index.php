@@ -1018,7 +1018,7 @@ if ($action === 'api_update_reservation' && $_SERVER['REQUEST_METHOD'] === 'POST
     $message = $ok ? 'Updated.' : 'Update rejected due to overlap or invalid payload.';
     if ($ok) {
         $existing = dbGetReservationByUuid((string) ($reservation['id'] ?? ''));
-        if ($existing && strtolower((string) ($existing['source'] ?? '')) === 'ical' && trim((string) ($existing['external_uid'] ?? '')) !== '') {
+        if ($existing && trim((string) ($existing['external_uid'] ?? '')) !== '') {
             $reservation['external_uid'] = (string) ($existing['external_uid'] ?? '');
             $sync = pushPricelabsReservationUpdate($reservation);
             if (!$sync['ok']) {
