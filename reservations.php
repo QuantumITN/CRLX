@@ -153,6 +153,7 @@ function pushPriceLabsReservationCreate(array $reservation, array $apartment, st
         $endpoints[] = '/v1/reservations?pms=' . rawurlencode($pms);
     }
     $headers = "Content-Type: application/json\r\nAccept: application/json\r\nx-api-key: {$apiKey}\r\nAuthorization: Bearer {$apiKey}\r\nUser-Agent: CRLX-PriceLabs-Bridge/1.0";
+    $attemptDetails = [];
     foreach (array_values(array_unique($endpoints)) as $endpoint) {
         $ctx = stream_context_create(['http' => ['method' => 'POST', 'timeout' => 30, 'header' => $headers, 'content' => $json, 'ignore_errors' => true]]);
         $raw = @file_get_contents($baseUrl . $endpoint, false, $ctx);
@@ -160,9 +161,19 @@ function pushPriceLabsReservationCreate(array $reservation, array $apartment, st
         if ($raw !== false && (preg_match('/\s(2\d\d)\s/', $statusLine) || $statusLine === '')) {
             return ['ok' => true, 'message' => 'Reservation pushed to PriceLabs.'];
         }
+
+        $body = is_string($raw) ? trim($raw) : '';
+        $decoded = $body !== '' ? json_decode($body, true) : null;
+        if (is_array($decoded)) {
+            $body = (string) ($decoded['message'] ?? $decoded['error'] ?? $decoded['detail'] ?? json_encode($decoded));
+        }
+        if (strlen($body) > 500) {
+            $body = substr($body, 0, 500) . '...';
+        }
+        $attemptDetails[] = trim($endpoint . ' => ' . ($statusLine !== '' ? $statusLine : 'no HTTP status') . ($body !== '' ? ' | ' . $body : ' | empty response'));
     }
 
-    return ['ok' => false, 'message' => 'PriceLabs rejected or did not accept the reservation create request.'];
+    return ['ok' => false, 'message' => 'PriceLabs rejected the reservation create request. Details: ' . implode(' ; ', $attemptDetails)];
 }
 
 function dbInsertManualReservation(array $r): bool
