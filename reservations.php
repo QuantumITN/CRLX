@@ -148,8 +148,12 @@ function pushPriceLabsReservationCreate(array $reservation, array $apartment, st
         return ['ok' => false, 'message' => 'Could not encode PriceLabs reservation payload.'];
     }
 
-    $endpoints = ['/v1/reservations'];
+    // PriceLabs Customer API endpoints are usually versioned under /v1, while
+    // the Dynamic Pricing/PMS integration docs describe the reservations endpoint
+    // as /reservations. Try both so the admin can use either API base URL.
+    $endpoints = ['/reservations', '/v1/reservations'];
     if ($pms !== '') {
+        $endpoints[] = '/reservations?pms=' . rawurlencode($pms);
         $endpoints[] = '/v1/reservations?pms=' . rawurlencode($pms);
     }
     $headers = "Content-Type: application/json\r\nAccept: application/json\r\nx-api-key: {$apiKey}\r\nAuthorization: Bearer {$apiKey}\r\nUser-Agent: CRLX-PriceLabs-Bridge/1.0";
@@ -173,7 +177,12 @@ function pushPriceLabsReservationCreate(array $reservation, array $apartment, st
         $attemptDetails[] = trim($endpoint . ' => ' . ($statusLine !== '' ? $statusLine : 'no HTTP status') . ($body !== '' ? ' | ' . $body : ' | empty response'));
     }
 
-    return ['ok' => false, 'message' => 'PriceLabs rejected the reservation create request. Details: ' . implode(' ; ', $attemptDetails)];
+    $details = implode(' ; ', $attemptDetails);
+    if (str_contains($details, '404 Not Found')) {
+        $details .= ' ; Note: PriceLabs returned 404 for the reservations endpoint. Their Customer API may not allow creating reservations; this may require the PriceLabs Dynamic Pricing/PMS integration reservations API credentials/base URL, not only the Customer API key.';
+    }
+
+    return ['ok' => false, 'message' => 'PriceLabs rejected the reservation create request. Details: ' . $details];
 }
 
 function dbInsertManualReservation(array $r): bool
